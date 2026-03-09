@@ -1,14 +1,103 @@
 import AppIntents
 import Foundation
 
+enum WidgetCategoryCatalog {
+    struct BuiltInCategory {
+        let id: String
+        let englishName: String
+        let chineseName: String
+
+        func displayName(in language: WidgetLanguage) -> String {
+            language.text(englishName, chineseName)
+        }
+    }
+
+    static let allIdentifier = "__all__"
+
+    static let builtInCategories: [BuiltInCategory] = [
+        BuiltInCategory(id: "study", englishName: "Study", chineseName: "学习"),
+        BuiltInCategory(id: "work", englishName: "Work", chineseName: "工作"),
+        BuiltInCategory(id: "life", englishName: "Life", chineseName: "生活"),
+        BuiltInCategory(id: "health", englishName: "Health", chineseName: "健康"),
+        BuiltInCategory(id: "finance", englishName: "Finance", chineseName: "财务")
+    ]
+
+    static func allEntity(in language: WidgetLanguage) -> WidgetCategoryEntity {
+        WidgetCategoryEntity(id: allIdentifier, name: language.text("All Categories", "全部分类"))
+    }
+
+    static func canonicalIdentifier(for rawName: String) -> String {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+
+        if trimmed == allIdentifier {
+            return allIdentifier
+        }
+
+        if let builtIn = builtInCategories.first(where: {
+            $0.englishName == trimmed || $0.chineseName == trimmed || $0.id == trimmed
+        }) {
+            return builtIn.id
+        }
+
+        return trimmed
+    }
+
+    static func entity(for identifier: String, language: WidgetLanguage, availableGroupNames: [String]) -> WidgetCategoryEntity {
+        let normalizedIdentifier = canonicalIdentifier(for: identifier)
+
+        if normalizedIdentifier == allIdentifier {
+            return allEntity(in: language)
+        }
+
+        if let builtIn = builtInCategories.first(where: { $0.id == normalizedIdentifier }) {
+            return WidgetCategoryEntity(id: builtIn.id, name: builtIn.displayName(in: language))
+        }
+
+        if let availableName = availableGroupNames.first(where: { canonicalIdentifier(for: $0) == normalizedIdentifier }) {
+            return WidgetCategoryEntity(id: normalizedIdentifier, name: availableName)
+        }
+
+        return WidgetCategoryEntity(id: normalizedIdentifier, name: identifier)
+    }
+
+    static func suggestedEntities(from storedGroups: [String], language: WidgetLanguage) -> [WidgetCategoryEntity] {
+        var entities: [WidgetCategoryEntity] = [allEntity(in: language)]
+        var seenIdentifiers: Set<String> = [allIdentifier]
+
+        for group in storedGroups {
+            let identifier = canonicalIdentifier(for: group)
+            guard !identifier.isEmpty else { continue }
+            guard !seenIdentifiers.contains(identifier) else { continue }
+
+            seenIdentifiers.insert(identifier)
+            entities.append(entity(for: identifier, language: language, availableGroupNames: storedGroups))
+        }
+
+        return entities
+    }
+
+    static func matches(itemCategory: String, selectedIdentifier: String) -> Bool {
+        let normalizedIdentifier = canonicalIdentifier(for: selectedIdentifier)
+
+        if normalizedIdentifier == allIdentifier {
+            return true
+        }
+
+        return canonicalIdentifier(for: itemCategory) == normalizedIdentifier
+    }
+}
+
 enum WidgetTaskSectionOption: String, AppEnum {
+    case automatic
     case notStarted
     case inProgress
 
-    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Status / 状态")
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Status")
     static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-        .notStarted: DisplayRepresentation(title: "Not Started / 未开始"),
-        .inProgress: DisplayRepresentation(title: "In Progress / 进行中")
+        .automatic: DisplayRepresentation(title: "Automatic"),
+        .notStarted: DisplayRepresentation(title: "Not Started"),
+        .inProgress: DisplayRepresentation(title: "In Progress")
     ]
 }
 
@@ -16,25 +105,22 @@ enum WidgetTaskSortOption: String, AppEnum {
     case remainingTime
     case byDeadline
 
-    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Sort / 排序")
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Sort")
     static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-        .remainingTime: DisplayRepresentation(title: "Remaining Time / 剩余时间"),
-        .byDeadline: DisplayRepresentation(title: "Deadline / 截止时间")
+        .remainingTime: DisplayRepresentation(title: "Remaining Time"),
+        .byDeadline: DisplayRepresentation(title: "Deadline")
     ]
 }
 
 struct WidgetCategoryEntity: AppEntity, Identifiable, Hashable {
-    static let allIdentifier = "__all__"
+    static let allIdentifier = WidgetCategoryCatalog.allIdentifier
 
     let id: String
     let name: String
 
-    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Category / 分类")
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Category")
     static let defaultQuery = WidgetCategoryQuery()
-
-    static var all: WidgetCategoryEntity {
-        WidgetCategoryEntity(id: allIdentifier, name: "All / 全部")
-    }
+    static let all = WidgetCategoryEntity(id: allIdentifier, name: "All Categories")
 
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(title: LocalizedStringResource(stringLiteral: name))
@@ -43,48 +129,48 @@ struct WidgetCategoryEntity: AppEntity, Identifiable, Hashable {
 
 struct WidgetCategoryQuery: EntityQuery {
     func entities(for identifiers: [WidgetCategoryEntity.ID]) async throws -> [WidgetCategoryEntity] {
-        let allEntities = try await suggestedEntities()
-        return allEntities.filter { identifiers.contains($0.id) }
+        let language = WidgetLanguage.systemCurrent()
+        let storedGroups = loadStoredGroups(language: language)
+        return identifiers.map { identifier in
+            WidgetCategoryCatalog.entity(for: identifier, language: language, availableGroupNames: storedGroups)
+        }
     }
 
     func suggestedEntities() async throws -> [WidgetCategoryEntity] {
-        let defaults = UserDefaults(suiteName: WidgetSharedDefaults.appGroupID) ?? .standard
-        let fallbackGroups: [String] = {
-            let preferredLanguage = Locale.preferredLanguages.first?.lowercased() ?? ""
-            if preferredLanguage.hasPrefix("zh") {
-                return ["学习", "工作", "生活", "健康", "财务"]
-            }
-            return ["Study", "Work", "Life", "Health", "Finance"]
-        }()
+        let language = WidgetLanguage.systemCurrent()
+        let storedGroups = loadStoredGroups(language: language)
+        return WidgetCategoryCatalog.suggestedEntities(from: storedGroups, language: language)
+    }
 
-        let storedGroups = (defaults.stringArray(forKey: WidgetSharedDefaults.groupsStorageKey) ?? fallbackGroups)
+    private func loadStoredGroups(language: WidgetLanguage) -> [String] {
+        let defaults = UserDefaults(suiteName: WidgetSharedDefaults.appGroupID) ?? .standard
+        let fallbackGroups = WidgetCategoryCatalog.builtInCategories.map { $0.displayName(in: language) }
+
+        return (defaults.stringArray(forKey: WidgetSharedDefaults.groupsStorageKey) ?? fallbackGroups)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        var uniqueGroups: [String] = []
-
-        for group in storedGroups where !uniqueGroups.contains(group) {
-            uniqueGroups.append(group)
-        }
-
-        return [WidgetCategoryEntity.all] + uniqueGroups.map { WidgetCategoryEntity(id: $0, name: $0) }
     }
 }
 
 struct DeadlineWidgetConfigurationIntent: WidgetConfigurationIntent {
-    static var title: LocalizedStringResource { "Widget Settings / 小组件设置" }
-    static var description: IntentDescription { "Choose task status, category, and sort order. / 选择任务状态、分类与排序方式。" }
+    static let title: LocalizedStringResource = "Widget Settings"
+    static let description = IntentDescription("Choose task status, category, and sort order.")
 
-    @Parameter(title: "Status / 状态")
+    @Parameter(title: "Status", default: .automatic)
     var section: WidgetTaskSectionOption
 
-    @Parameter(title: "Category / 分类")
-    var category: WidgetCategoryEntity
+    @Parameter(title: "Category")
+    var category: WidgetCategoryEntity?
 
-    @Parameter(title: "Sort / 排序")
+    @Parameter(title: "Sort", default: .remainingTime)
     var sort: WidgetTaskSortOption
 
+    static var parameterSummary: some ParameterSummary {
+        Summary("\(\.$section) · \(\.$category) · \(\.$sort)")
+    }
+
     init() {
-        section = .inProgress
+        section = .automatic
         category = .all
         sort = .remainingTime
     }

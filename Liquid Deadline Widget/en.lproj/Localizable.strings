@@ -1,0 +1,17 @@
+"Status" = "Status";
+"Category" = "Category";
+"Sort" = "Sort";
+"All Categories" = "All Categories";
+"Automatic" = "Automatic";
+"Not Started" = "Not Started";
+"In Progress" = "In Progress";
+"Remaining Time" = "Remaining Time";
+"Deadline" = "Deadline";
+"Widget Settings" = "Widget Settings";
+"Choose task status, category, and sort order." = "Choose task status, category, and sort order.";
+"Show the nearest deadlines with progress and countdown." = "Show the nearest deadlines with progress and countdown.";
+"Starting Soon" = "Starting Soon";
+"Lock Screen In Progress" = "Lock Screen In Progress";
+"Lock Screen Starting Soon" = "Lock Screen Starting Soon";
+"Show the nearest in-progress task on the Lock Screen." = "Show the nearest in-progress task on the Lock Screen.";
+"Show the next task that will start soon on the Lock Screen." = "Show the next task that will start soon on the Lock Screen.";

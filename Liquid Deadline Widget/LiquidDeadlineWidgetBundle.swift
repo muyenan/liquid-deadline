@@ -5,5 +5,7 @@ import SwiftUI
 struct LiquidDeadlineWidgetBundle: WidgetBundle {
     var body: some Widget {
         LiquidDeadlineWidget()
+        LockScreenInProgressWidget()
+        LockScreenStartingSoonWidget()
     }
 }
