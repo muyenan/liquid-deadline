@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NewDeadlineSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var languageManager: LanguageManager
     @ObservedObject var store: DeadlineStore
 
     @State private var title: String = ""
@@ -11,55 +12,63 @@ struct NewDeadlineSheet: View {
     @State private var endDate: Date = Calendar.current.date(byAdding: .hour, value: 4, to: .now) ?? .now
     @State private var showError = false
 
+    private func t(_ english: String, _ chinese: String) -> String {
+        languageManager.currentLanguage.text(english, chinese)
+    }
+
     var body: some View {
         NavigationStack {
             Form {
-                Section("事项信息") {
-                    TextField("标题", text: $title)
-                    Picker("分类", selection: $selectedGroup) {
+                Section {
+                    TextField(t("Title", "标题"), text: $title)
+                    Picker(t("Category", "分类"), selection: $selectedGroup) {
                         ForEach(store.groups, id: \.self) { group in
                             Text(group).tag(group)
                         }
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("描述")
+                        Text(t("Description", "描述"))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                         TextEditor(text: $detail)
                             .frame(minHeight: 90)
                     }
+                } header: {
+                    Text(t("Task Info", "事项信息"))
                 }
 
-                Section("时间设置") {
-                    DatePicker("起始时间", selection: $startDate, displayedComponents: [.date, .hourAndMinute])
-                    DatePicker("结束时间", selection: $endDate, displayedComponents: [.date, .hourAndMinute])
+                Section {
+                    DatePicker(t("Start Time", "起始时间"), selection: $startDate, displayedComponents: [.date, .hourAndMinute])
+                    DatePicker(t("End Time", "结束时间"), selection: $endDate, displayedComponents: [.date, .hourAndMinute])
+                } header: {
+                    Text(t("Time", "时间设置"))
                 }
 
                 if showError {
-                    Text("请保证标题不为空，且结束时间晚于起始时间。")
+                    Text(t("Title cannot be empty, and end time must be later than start time.", "请保证标题不为空，且结束时间晚于起始时间。"))
                         .font(.footnote)
                         .foregroundStyle(.red)
                 }
             }
-            .navigationTitle("新建事项")
+            .navigationTitle(t("New Task", "新建事项"))
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("取消") { dismiss() }
+                    Button(t("Cancel", "取消")) { dismiss() }
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("保存") { save() }
+                    Button(t("Save", "保存")) { save() }
                         .bold()
                 }
             }
             .onAppear {
                 if selectedGroup.isEmpty {
-                    selectedGroup = store.groups.first ?? "未分类"
+                    selectedGroup = store.groups.first ?? DeadlineStore.fallbackGroupName
                 }
             }
             .onChange(of: store.groups) { _, groups in
                 if !groups.contains(selectedGroup) {
-                    selectedGroup = groups.first ?? "未分类"
+                    selectedGroup = groups.first ?? DeadlineStore.fallbackGroupName
                 }
             }
         }

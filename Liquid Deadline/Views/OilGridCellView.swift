@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct OilGridCellView: View {
+    @EnvironmentObject private var languageManager: LanguageManager
     let item: DeadlineItem
     let now: Date
     let usesLightText: Bool
@@ -15,13 +16,22 @@ struct OilGridCellView: View {
     private var tertiaryTextColor: Color { usesLightText ? .white.opacity(0.66) : .black.opacity(0.62) }
 
     private var statusText: String {
+        let language = languageManager.currentLanguage
         switch section {
         case .notStarted:
-            return "距开始 \(Self.durationText(from: now, to: item.startDate))"
+            return language.text(
+                "Starts in \(Self.durationText(from: now, to: item.startDate, language: language))",
+                "距开始 \(Self.durationText(from: now, to: item.startDate, language: language))"
+            )
         case .inProgress:
-            return "剩余 \(Self.durationText(from: now, to: item.endDate))"
-        case .finished:
-            return "已结束"
+            return language.text(
+                "Remaining \(Self.durationText(from: now, to: item.endDate, language: language))",
+                "剩余 \(Self.durationText(from: now, to: item.endDate, language: language))"
+            )
+        case .completed:
+            return language.text("Completed", "已完成")
+        case .ended:
+            return language.text("Ended", "已结束")
         }
     }
 
@@ -68,14 +78,17 @@ struct OilGridCellView: View {
         .liquidGlassCard(cornerRadius: 18)
     }
 
-    private static func durationText(from now: Date, to target: Date) -> String {
+    private static func durationText(from now: Date, to target: Date, language: AppLanguage) -> String {
         let formatter = DateComponentsFormatter()
         formatter.allowedUnits = [.day, .hour, .minute]
         formatter.unitsStyle = .abbreviated
         formatter.maximumUnitCount = 2
         formatter.zeroFormattingBehavior = .dropAll
+        var calendar = Calendar.current
+        calendar.locale = language.locale
+        formatter.calendar = calendar
         let interval = max(target.timeIntervalSince(now), 0)
-        return formatter.string(from: interval) ?? "0m"
+        return formatter.string(from: interval) ?? language.text("0m", "0分钟")
     }
 }
 

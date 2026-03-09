@@ -3,12 +3,19 @@ import Combine
 
 @MainActor
 final class DeadlineStore: ObservableObject {
-    static let defaultGroups: [String] = [
-        "学习",
-        "工作",
-        "生活",
-        "健康",
-        "财务"
+    static func defaultGroups(for language: AppLanguage) -> [String] {
+        switch language {
+        case .english:
+            return ["Study", "Work", "Life", "Health", "Finance"]
+        case .chinese:
+            return ["学习", "工作", "生活", "健康", "财务"]
+        }
+    }
+
+    static let fallbackGroupName = "Uncategorized"
+    private static let builtInGroupSets: [[String]] = [
+        defaultGroups(for: .english),
+        defaultGroups(for: .chinese)
     ]
 
     @Published var items: [DeadlineItem] = [] {
@@ -35,7 +42,7 @@ final class DeadlineStore: ObservableObject {
             }
         }
     }
-    @Published var groups: [String] = DeadlineStore.defaultGroups
+    @Published var groups: [String] = DeadlineStore.defaultGroups(for: .english)
     @Published var backgroundStyle: BackgroundStyleOption = .white {
         didSet {
             if oldValue != backgroundStyle {
@@ -51,15 +58,17 @@ final class DeadlineStore: ObservableObject {
         }
     }
 
-    private let itemsStorageKey = "deadline_oil_items_v1"
-    private let viewStyleStorageKey = "deadline_oil_view_style_v1"
-    private let sortOptionStorageKey = "deadline_oil_sort_option_v1"
-    private let selectedFilterGroupStorageKey = "deadline_oil_selected_filter_group_v1"
-    private let groupsStorageKey = "deadline_oil_groups_v1"
-    private let backgroundStyleStorageKey = "deadline_oil_background_style_v1"
-    private let liquidMotionEnabledStorageKey = "deadline_oil_liquid_motion_enabled_v1"
+    private let defaults = DeadlineStorage.sharedDefaults
+    private let itemsStorageKey = DeadlineStorage.itemsStorageKey
+    private let viewStyleStorageKey = DeadlineStorage.viewStyleStorageKey
+    private let sortOptionStorageKey = DeadlineStorage.sortOptionStorageKey
+    private let selectedFilterGroupStorageKey = DeadlineStorage.selectedFilterGroupStorageKey
+    private let groupsStorageKey = DeadlineStorage.groupsStorageKey
+    private let backgroundStyleStorageKey = DeadlineStorage.backgroundStyleStorageKey
+    private let liquidMotionEnabledStorageKey = DeadlineStorage.liquidMotionEnabledStorageKey
 
     init() {
+        DeadlineStorage.migrateStandardDefaultsIfNeeded()
         loadViewStyle()
         loadSortOption()
         loadGroups()
@@ -77,7 +86,7 @@ final class DeadlineStore: ObservableObject {
         guard !trimmedTitle.isEmpty, endDate > startDate else { return }
         let item = DeadlineItem(
             title: trimmedTitle,
-            category: trimmedCategory.isEmpty ? (groups.first ?? "未分类") : trimmedCategory,
+            category: trimmedCategory.isEmpty ? (groups.first ?? Self.fallbackGroupName) : trimmedCategory,
             detail: trimmedDetail,
             startDate: startDate,
             endDate: endDate
@@ -92,10 +101,22 @@ final class DeadlineStore: ObservableObject {
         guard !trimmedTitle.isEmpty, endDate > startDate else { return }
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].title = trimmedTitle
-        items[index].category = trimmedCategory.isEmpty ? (groups.first ?? "未分类") : trimmedCategory
+        items[index].category = trimmedCategory.isEmpty ? (groups.first ?? Self.fallbackGroupName) : trimmedCategory
         items[index].detail = trimmedDetail
         items[index].startDate = startDate
         items[index].endDate = endDate
+    }
+
+    func updateClosedItemDetail(id: UUID, detail: String) {
+        let trimmedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        items[index].detail = trimmedDetail
+    }
+
+    func completeItem(id: UUID, at completedAt: Date = .now) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        guard items[index].canComplete(at: completedAt) else { return }
+        items[index].completedAt = completedAt
     }
 
     func removeItem(id: UUID) {
@@ -111,9 +132,25 @@ final class DeadlineStore: ObservableObject {
         switch sortOption {
         case .recentAdded:
             result.sort { $0.createdAt > $1.createdAt }
+        case .remainingTime:
+            result.sort { lhs, rhs in
+                switch section {
+                case .notStarted:
+                    return lhs.startDate < rhs.startDate
+                case .inProgress:
+                    return lhs.endDate < rhs.endDate
+                case .completed:
+                    return (lhs.completedAt ?? lhs.endDate) > (rhs.completedAt ?? rhs.endDate)
+                case .ended:
+                    return lhs.endDate > rhs.endDate
+                }
+            }
         case .byDate:
             result.sort { lhs, rhs in
-                if section == .finished {
+                if section == .completed {
+                    return (lhs.completedAt ?? lhs.endDate) > (rhs.completedAt ?? rhs.endDate)
+                }
+                if section == .ended {
                     return lhs.endDate > rhs.endDate
                 }
                 return lhs.endDate < rhs.endDate
@@ -185,14 +222,41 @@ final class DeadlineStore: ObservableObject {
     }
 
     func resetGroupsToDefault() {
-        groups = Self.defaultGroups
+        groups = Self.defaultGroups(for: .english)
+        saveGroups()
+        validateSelectedFilterGroup()
+    }
+
+    func applyDefaultGroupLocalizationIfNeeded(language: AppLanguage) {
+        let targetGroups = Self.defaultGroups(for: language)
+        if groups == targetGroups {
+            return
+        }
+
+        guard let sourceGroups = Self.builtInGroupSets.first(where: { $0 == groups }) else {
+            return
+        }
+
+        let groupMap = Dictionary(uniqueKeysWithValues: zip(sourceGroups, targetGroups))
+        groups = targetGroups
+
+        for index in items.indices {
+            if let mapped = groupMap[items[index].category] {
+                items[index].category = mapped
+            }
+        }
+
+        if let selectedFilterGroup, let mapped = groupMap[selectedFilterGroup] {
+            self.selectedFilterGroup = mapped
+        }
+
         saveGroups()
         validateSelectedFilterGroup()
     }
 
     private func loadItems() {
         guard
-            let data = UserDefaults.standard.data(forKey: itemsStorageKey),
+            let data = defaults.data(forKey: itemsStorageKey),
             let decoded = try? JSONDecoder().decode([DeadlineItem].self, from: data)
         else { return }
         items = decoded
@@ -200,43 +264,44 @@ final class DeadlineStore: ObservableObject {
 
     private func saveItems() {
         guard let data = try? JSONEncoder().encode(items) else { return }
-        UserDefaults.standard.set(data, forKey: itemsStorageKey)
+        defaults.set(data, forKey: itemsStorageKey)
+        DeadlineStorage.reloadWidgets()
     }
 
     private func loadViewStyle() {
         guard
-            let raw = UserDefaults.standard.string(forKey: viewStyleStorageKey),
+            let raw = defaults.string(forKey: viewStyleStorageKey),
             let style = DeadlineViewStyle(rawValue: raw)
         else { return }
         viewStyle = style
     }
 
     private func saveViewStyle() {
-        UserDefaults.standard.set(viewStyle.rawValue, forKey: viewStyleStorageKey)
+        defaults.set(viewStyle.rawValue, forKey: viewStyleStorageKey)
     }
 
     private func loadSortOption() {
         guard
-            let raw = UserDefaults.standard.string(forKey: sortOptionStorageKey),
+            let raw = defaults.string(forKey: sortOptionStorageKey),
             let option = DeadlineSortOption(rawValue: raw)
         else { return }
         sortOption = option
     }
 
     private func saveSortOption() {
-        UserDefaults.standard.set(sortOption.rawValue, forKey: sortOptionStorageKey)
+        defaults.set(sortOption.rawValue, forKey: sortOptionStorageKey)
     }
 
     private func loadSelectedFilterGroup() {
-        selectedFilterGroup = UserDefaults.standard.string(forKey: selectedFilterGroupStorageKey)
+        selectedFilterGroup = defaults.string(forKey: selectedFilterGroupStorageKey)
     }
 
     private func saveSelectedFilterGroup() {
-        UserDefaults.standard.set(selectedFilterGroup, forKey: selectedFilterGroupStorageKey)
+        defaults.set(selectedFilterGroup, forKey: selectedFilterGroupStorageKey)
     }
 
     private func loadGroups() {
-        let stored = UserDefaults.standard.stringArray(forKey: groupsStorageKey) ?? Self.defaultGroups
+        let stored = defaults.stringArray(forKey: groupsStorageKey) ?? Self.defaultGroups(for: .english)
         let normalized = stored
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -244,11 +309,12 @@ final class DeadlineStore: ObservableObject {
         for group in normalized where !unique.contains(group) {
             unique.append(group)
         }
-        groups = unique.isEmpty ? Self.defaultGroups : unique
+        groups = unique.isEmpty ? Self.defaultGroups(for: .english) : unique
     }
 
     private func saveGroups() {
-        UserDefaults.standard.set(groups, forKey: groupsStorageKey)
+        defaults.set(groups, forKey: groupsStorageKey)
+        DeadlineStorage.reloadWidgets()
     }
 
     private func validateSelectedFilterGroup() {
@@ -260,25 +326,25 @@ final class DeadlineStore: ObservableObject {
 
     private func loadBackgroundStyle() {
         guard
-            let raw = UserDefaults.standard.string(forKey: backgroundStyleStorageKey),
+            let raw = defaults.string(forKey: backgroundStyleStorageKey),
             let style = BackgroundStyleOption(rawValue: raw)
         else { return }
         backgroundStyle = style
     }
 
     private func saveBackgroundStyle() {
-        UserDefaults.standard.set(backgroundStyle.rawValue, forKey: backgroundStyleStorageKey)
+        defaults.set(backgroundStyle.rawValue, forKey: backgroundStyleStorageKey)
     }
 
     private func loadLiquidMotionEnabled() {
-        if UserDefaults.standard.object(forKey: liquidMotionEnabledStorageKey) == nil {
+        if defaults.object(forKey: liquidMotionEnabledStorageKey) == nil {
             liquidMotionEnabled = true
             return
         }
-        liquidMotionEnabled = UserDefaults.standard.bool(forKey: liquidMotionEnabledStorageKey)
+        liquidMotionEnabled = defaults.bool(forKey: liquidMotionEnabledStorageKey)
     }
 
     private func saveLiquidMotionEnabled() {
-        UserDefaults.standard.set(liquidMotionEnabled, forKey: liquidMotionEnabledStorageKey)
+        defaults.set(liquidMotionEnabled, forKey: liquidMotionEnabledStorageKey)
     }
 }
