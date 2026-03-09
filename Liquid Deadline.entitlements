@@ -4,7 +4,7 @@
 <dict>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.name.qianmo.DeadOil</string>
+		<string>group.name.qianmo.LiquidDeadline</string>
 	</array>
 </dict>
 </plist>

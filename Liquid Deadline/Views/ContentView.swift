@@ -438,7 +438,7 @@ private struct DeadlineRowView: View {
                 OilProgressBarView(progress: progress, tint: liquidTint)
 
                 HStack {
-                    Text(languageManager.currentLanguage.text("Start", "起") + " \(item.startDate.formatted(date: .omitted, time: .shortened))")
+                    Text(languageManager.currentLanguage.text("Start", "起") + " \(item.startDate.formatted(date: .abbreviated, time: .shortened))")
                     Spacer()
                     Text(languageManager.currentLanguage.text("End", "止") + " \(item.endDate.formatted(date: .abbreviated, time: .shortened))")
                 }
