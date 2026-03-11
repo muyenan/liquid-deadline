@@ -79,20 +79,40 @@ enum DeadlineViewStyle: String, CaseIterable, Identifiable, Codable {
 }
 
 enum DeadlineSortOption: String, CaseIterable, Identifiable, Codable {
-    case recentAdded = "按照最近添加排序"
-    case remainingTime = "按剩余时间"
-    case byDate = "按截止时间"
+    case addedDateAscending = "added_date_ascending"
+    case addedDateDescending = "added_date_descending"
+    case remainingTimeAscending = "remaining_time_ascending"
+    case remainingTimeDescending = "remaining_time_descending"
 
     var id: String { rawValue }
 
+    static func fromStoredValue(_ storedValue: String) -> Self? {
+        if let option = Self(rawValue: storedValue) {
+            return option
+        }
+
+        switch storedValue {
+        case "按照最近添加排序":
+            return .addedDateDescending
+        case "按剩余时间":
+            return .remainingTimeAscending
+        case "按截止时间":
+            return .remainingTimeAscending
+        default:
+            return nil
+        }
+    }
+
     func title(in language: AppLanguage) -> String {
         switch self {
-        case .recentAdded:
-            return language.text("Sort by Recently Added", "按照最近添加排序")
-        case .remainingTime:
-            return language.text("Sort by Remaining Time", "按剩余时间")
-        case .byDate:
-            return language.text("Sort by Deadline", "按截止时间")
+        case .addedDateAscending:
+            return language.text("Added Date Ascending", "按添加日期正序")
+        case .addedDateDescending:
+            return language.text("Added Date Descending", "按添加日期倒序")
+        case .remainingTimeAscending:
+            return language.text("Remaining Time Ascending", "按剩余时间正序")
+        case .remainingTimeDescending:
+            return language.text("Remaining Time Descending", "按剩余时间倒序")
         }
     }
 }

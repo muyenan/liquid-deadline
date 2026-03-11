@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		4BF2E8642F5EA91400F7EF8D /* Updating Logs in Resources */ = {isa = PBXBuildFile; fileRef = 4BF2E8622F5EA90A00F7EF8D /* Updating Logs */; };
 		6C2D110A3B7A100100000001 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6C2D110A3B7A100100000006 /* WidgetKit.framework */; };
 		6C2D110A3B7A100100000002 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6C2D110A3B7A100100000007 /* SwiftUI.framework */; };
 		6C2D110A3B7A100100000003 /* LiquidDeadlineWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 6C2D110A3B7A100100000008 /* LiquidDeadlineWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -55,7 +54,7 @@
 		4B489F602F3F006B0055C16A /* Liquid Deadline.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Liquid Deadline.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		4B489F6D2F3F006C0055C16A /* Liquid DeadlineTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Liquid DeadlineTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		4B489F772F3F006C0055C16A /* Liquid DeadlineUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Liquid DeadlineUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
-		4BF2E8622F5EA90A00F7EF8D /* Updating Logs */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Updating Logs"; sourceTree = "<group>"; };
+		4BF2E8652F5EBBE100F7EF8D /* Updating Logs.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = "Updating Logs.md"; sourceTree = "<group>"; };
 		6C2D110A3B7A100100000006 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		6C2D110A3B7A100100000007 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		6C2D110A3B7A100100000008 /* LiquidDeadlineWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LiquidDeadlineWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -128,7 +127,7 @@
 			children = (
 				6C2D110A3B7A100100000009 /* Liquid Deadline.entitlements */,
 				6C2D110A3B7A10010000000A /* Liquid Deadline Widget.entitlements */,
-				4BF2E8622F5EA90A00F7EF8D /* Updating Logs */,
+				4BF2E8652F5EBBE100F7EF8D /* Updating Logs.md */,
 				4B489F622F3F006B0055C16A /* Liquid Deadline */,
 				6C2D110A3B7A10010000000C /* Liquid Deadline Widget */,
 				6C2D110A3B7A10010000000E /* Frameworks */,
@@ -299,7 +298,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				4BF2E8642F5EA91400F7EF8D /* Updating Logs in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

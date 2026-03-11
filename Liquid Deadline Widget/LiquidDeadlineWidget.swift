@@ -3,7 +3,7 @@ import SwiftUI
 import WidgetKit
 
 enum WidgetSharedDefaults {
-    static let appGroupID = "group.name.qianmo.DeadOil"
+    static let appGroupID = "group.name.qianmo.LiquidDeadline"
     static let itemsStorageKey = "deadline_oil_items_v1"
     static let groupsStorageKey = "deadline_oil_groups_v1"
     static let languageSelectionKey = "deadline_oil_language_selection_v1"
@@ -240,16 +240,12 @@ private struct LiquidDeadlineWidgetRepository {
             return []
         }
 
-        let resolvedSection = section == .automatic ? preferredSection(now: now) : section
-
         let filteredItems = items.filter { item in
-            switch resolvedSection {
+            switch section {
             case .notStarted:
                 guard item.section(at: now) == .notStarted else { return false }
             case .inProgress:
                 guard item.section(at: now) == .inProgress else { return false }
-            case .automatic:
-                return false
             }
 
             if categoryID == WidgetCategoryEntity.allIdentifier {
@@ -260,22 +256,22 @@ private struct LiquidDeadlineWidgetRepository {
 
         let sortedItems = filteredItems.sorted { lhs, rhs in
             switch sort {
+            case .addedDate:
+                return lhs.createdAt > rhs.createdAt
             case .remainingTime:
-                let lhsTarget = resolvedSection == .notStarted ? lhs.startDate : lhs.endDate
-                let rhsTarget = resolvedSection == .notStarted ? rhs.startDate : rhs.endDate
+                let lhsTarget = section == .notStarted ? lhs.startDate : lhs.endDate
+                let rhsTarget = section == .notStarted ? rhs.startDate : rhs.endDate
                 return lhsTarget < rhsTarget
-            case .byDeadline:
-                return lhs.endDate < rhs.endDate
             }
         }
 
         return sortedItems.map { item in
-            let countdownTarget = resolvedSection == .notStarted ? item.startDate : item.endDate
+            let countdownTarget = section == .notStarted ? item.startDate : item.endDate
             let countdownText = countdownText(
                 for: countdownTarget,
                 now: now,
-                prefixEnglish: resolvedSection == .notStarted ? "Starts in" : "Remaining",
-                prefixChinese: resolvedSection == .notStarted ? "距开始" : "剩余"
+                prefixEnglish: section == .notStarted ? "Starts in" : "Remaining",
+                prefixChinese: section == .notStarted ? "距开始" : "剩余"
             )
 
             return WidgetTaskSnapshot(
@@ -371,9 +367,7 @@ struct LiquidDeadlineWidgetProvider: AppIntentTimelineProvider {
         let language = WidgetLanguage.current()
         let repository = LiquidDeadlineWidgetRepository()
         let availableGroups = repository.availableGroupNames(language: language)
-        let section = configuration.section == .automatic
-            ? repository.preferredSection(now: now)
-            : configuration.section
+        let section = configuration.section
         let categoryIdentifier = configuration.category?.id ?? WidgetCategoryEntity.allIdentifier
         let category = WidgetCategoryCatalog.entity(
             for: categoryIdentifier,
@@ -403,9 +397,7 @@ struct LiquidDeadlineWidgetProvider: AppIntentTimelineProvider {
         let language = WidgetLanguage.current()
         let repository = LiquidDeadlineWidgetRepository()
         let availableGroups = repository.availableGroupNames(language: language)
-        let section = configuration.section == .automatic
-            ? repository.preferredSection(now: now)
-            : configuration.section
+        let section = configuration.section
         let categoryIdentifier = configuration.category?.id ?? WidgetCategoryEntity.allIdentifier
         let category = WidgetCategoryCatalog.entity(
             for: categoryIdentifier,

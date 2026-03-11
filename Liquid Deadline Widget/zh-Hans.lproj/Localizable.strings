@@ -5,7 +5,8 @@
 "Automatic" = "自动";
 "Not Started" = "未开始";
 "In Progress" = "进行中";
-"Remaining Time" = "剩余时间";
+"Added Date" = "按添加日期";
+"Remaining Time" = "按剩余时间";
 "Deadline" = "截止时间";
 "Widget Settings" = "小组件设置";
 "Choose task status, category, and sort order." = "选择任务状态、分类和排序方式。";

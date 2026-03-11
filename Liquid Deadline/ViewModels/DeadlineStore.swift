@@ -28,7 +28,7 @@ final class DeadlineStore: ObservableObject {
             }
         }
     }
-    @Published var sortOption: DeadlineSortOption = .recentAdded {
+    @Published var sortOption: DeadlineSortOption = .addedDateDescending {
         didSet {
             if oldValue != sortOption {
                 saveSortOption()
@@ -130,33 +130,27 @@ final class DeadlineStore: ObservableObject {
         }
 
         switch sortOption {
-        case .recentAdded:
+        case .addedDateAscending:
+            result.sort { $0.createdAt < $1.createdAt }
+        case .addedDateDescending:
             result.sort { $0.createdAt > $1.createdAt }
-        case .remainingTime:
-            result.sort { lhs, rhs in
-                switch section {
-                case .notStarted:
-                    return lhs.startDate < rhs.startDate
-                case .inProgress:
-                    return lhs.endDate < rhs.endDate
-                case .completed:
-                    return (lhs.completedAt ?? lhs.endDate) > (rhs.completedAt ?? rhs.endDate)
-                case .ended:
-                    return lhs.endDate > rhs.endDate
-                }
-            }
-        case .byDate:
-            result.sort { lhs, rhs in
-                if section == .completed {
-                    return (lhs.completedAt ?? lhs.endDate) > (rhs.completedAt ?? rhs.endDate)
-                }
-                if section == .ended {
-                    return lhs.endDate > rhs.endDate
-                }
-                return lhs.endDate < rhs.endDate
-            }
+        case .remainingTimeAscending:
+            result.sort { sortReferenceDate(for: $0, in: section) < sortReferenceDate(for: $1, in: section) }
+        case .remainingTimeDescending:
+            result.sort { sortReferenceDate(for: $0, in: section) > sortReferenceDate(for: $1, in: section) }
         }
         return result
+    }
+
+    private func sortReferenceDate(for item: DeadlineItem, in section: DeadlineSection) -> Date {
+        switch section {
+        case .notStarted:
+            return item.startDate
+        case .inProgress, .ended:
+            return item.endDate
+        case .completed:
+            return item.completedAt ?? item.endDate
+        }
     }
 
     func toggleViewStyle() {
@@ -283,7 +277,7 @@ final class DeadlineStore: ObservableObject {
     private func loadSortOption() {
         guard
             let raw = defaults.string(forKey: sortOptionStorageKey),
-            let option = DeadlineSortOption(rawValue: raw)
+            let option = DeadlineSortOption.fromStoredValue(raw)
         else { return }
         sortOption = option
     }

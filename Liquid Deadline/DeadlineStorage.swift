@@ -5,7 +5,7 @@ import WidgetKit
 #endif
 
 enum DeadlineStorage {
-    static let appGroupID = "group.name.qianmo.DeadOil"
+    static let appGroupID = "group.name.qianmo.LiquidDeadline"
     static let languageSelectionKey = "deadline_oil_language_selection_v1"
     static let itemsStorageKey = "deadline_oil_items_v1"
     static let viewStyleStorageKey = "deadline_oil_view_style_v1"

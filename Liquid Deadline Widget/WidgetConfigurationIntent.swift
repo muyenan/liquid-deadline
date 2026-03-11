@@ -89,26 +89,24 @@ enum WidgetCategoryCatalog {
 }
 
 enum WidgetTaskSectionOption: String, AppEnum {
-    case automatic
     case notStarted
     case inProgress
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Status")
     static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
-        .automatic: DisplayRepresentation(title: "Automatic"),
         .notStarted: DisplayRepresentation(title: "Not Started"),
         .inProgress: DisplayRepresentation(title: "In Progress")
     ]
 }
 
 enum WidgetTaskSortOption: String, AppEnum {
+    case addedDate
     case remainingTime
-    case byDeadline
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Sort")
     static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
+        .addedDate: DisplayRepresentation(title: "Added Date"),
         .remainingTime: DisplayRepresentation(title: "Remaining Time"),
-        .byDeadline: DisplayRepresentation(title: "Deadline")
     ]
 }
 
@@ -156,7 +154,7 @@ struct DeadlineWidgetConfigurationIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "Widget Settings"
     static let description = IntentDescription("Choose task status, category, and sort order.")
 
-    @Parameter(title: "Status", default: .automatic)
+    @Parameter(title: "Status", default: .inProgress)
     var section: WidgetTaskSectionOption
 
     @Parameter(title: "Category")
@@ -170,7 +168,7 @@ struct DeadlineWidgetConfigurationIntent: WidgetConfigurationIntent {
     }
 
     init() {
-        section = .automatic
+        section = .inProgress
         category = .all
         sort = .remainingTime
     }
