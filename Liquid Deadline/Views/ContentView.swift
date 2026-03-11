@@ -32,19 +32,18 @@ struct ContentView: View {
         TabView(selection: selectedSectionBinding) {
             ForEach(DeadlineSection.allCases) { section in
                 NavigationStack {
-                    TimelineView(.periodic(from: .now, by: 1.0)) { timeline in
-                        let currentNow = timeline.date
-                        let items = store.items(in: section, at: currentNow)
+                    ZStack {
+                        LiquidBackgroundView(
+                            backgroundStyle: store.backgroundStyle
+                        )
 
-                        ZStack {
-                            LiquidBackgroundView(
-                                backgroundStyle: store.backgroundStyle
-                            )
-
-                            ScrollView {
+                        ScrollView {
+                            TimelineView(.periodic(from: .now, by: 1.0)) { timeline in
+                                let currentNow = timeline.date
                                 VStack(spacing: 14) {
                                     DeadlineSectionView(
-                                        items: items,
+                                        section: section,
+                                        items: store.items(in: section, at: currentNow),
                                         style: store.viewStyle,
                                         now: currentNow,
                                         usesLightText: usesLightText,
@@ -58,32 +57,26 @@ struct ContentView: View {
                                 .padding(.bottom, 22)
                             }
                         }
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .topBarLeading) {
-                                topMenu
+                    }
+                    .navigationTitle(section.title(in: language))
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            topMenu
+                        }
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                showingSettingsSheet = true
+                            } label: {
+                                Image(systemName: "gearshape")
+                                    .fontWeight(.semibold)
                             }
-                            ToolbarItem(placement: .principal) {
-                                SectionNavigationTitleView(
-                                    title: section.title(in: language),
-                                    count: items.count
-                                )
-                            }
-                            ToolbarItem(placement: .topBarTrailing) {
-                                Button {
-                                    showingSettingsSheet = true
-                                } label: {
-                                    Image(systemName: "gearshape")
-                                        .fontWeight(.semibold)
-                                }
-                            }
-                            ToolbarItem(placement: .topBarTrailing) {
-                                Button {
-                                    showingCreateSheet = true
-                                } label: {
-                                    Image(systemName: "plus")
-                                        .fontWeight(.semibold)
-                                }
+                        }
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                showingCreateSheet = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .fontWeight(.semibold)
                             }
                         }
                     }
@@ -220,29 +213,6 @@ struct ContentView: View {
     }
 }
 
-private struct SectionNavigationTitleView: View {
-    let title: String
-    let count: Int
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(title)
-                .font(.headline.weight(.semibold))
-
-            Text("\(count)")
-                .font(.caption.weight(.semibold))
-                .monospacedDigit()
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(Color.primary.opacity(0.10))
-                )
-        }
-        .lineLimit(1)
-    }
-}
-
 private struct MenuCheckRow: View {
     let title: String
     let systemImage: String?
@@ -291,6 +261,7 @@ private extension DeadlineSection {
 
 private struct DeadlineSectionView: View {
     @EnvironmentObject private var languageManager: LanguageManager
+    let section: DeadlineSection
     let items: [DeadlineItem]
     let style: DeadlineViewStyle
     let now: Date
@@ -311,15 +282,31 @@ private struct DeadlineSectionView: View {
         usesLightText ? .white.opacity(0.75) : .black.opacity(0.72)
     }
 
+    private var badgeBackground: Color {
+        usesLightText ? .white.opacity(0.2) : .black.opacity(0.12)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(section.title(in: languageManager.currentLanguage))
+                    .font(.headline)
+                    .foregroundStyle(primaryTextColor)
+                Spacer()
+                Text("\(items.count)")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(primaryTextColor)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(badgeBackground, in: Capsule())
+            }
+
             if items.isEmpty {
-                Text(languageManager.currentLanguage.text("No items yet\nTap \"+\" to create a task", "暂无事项\n点击“+”以创建项目"))
-                    .font(.footnote.weight(.medium))
+                Text(languageManager.currentLanguage.text("No items yet", "暂无事项"))
+                    .font(.footnote)
                     .foregroundStyle(secondaryTextColor)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 26)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
             } else if style == .progressBar {
                 VStack(spacing: 10) {
                     ForEach(items) { item in

@@ -12,12 +12,25 @@
 		<key>Liquid Deadline.xcscheme_^#shared#^_</key>
 		<dict>
 			<key>orderHint</key>
-			<integer>0</integer>
+			<integer>1</integer>
 		</dict>
 		<key>LiquidDeadlineWidgetExtension.xcscheme_^#shared#^_</key>
 		<dict>
 			<key>orderHint</key>
 			<integer>0</integer>
+		</dict>
+	</dict>
+	<key>SuppressBuildableAutocreation</key>
+	<dict>
+		<key>4B489F5F2F3F006B0055C16A</key>
+		<dict>
+			<key>primary</key>
+			<true/>
+		</dict>
+		<key>6C2D110A3B7A10010000000F</key>
+		<dict>
+			<key>primary</key>
+			<true/>
 		</dict>
 	</dict>
 </dict>
