@@ -242,7 +242,7 @@ private struct SectionPageHeaderView: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        HStack(alignment: .center, spacing: 12) {
             Text(section.title(in: languageManager.currentLanguage))
                 .font(.system(size: 42, weight: .black, design: .rounded))
                 .foregroundStyle(primaryTextColor)
@@ -817,6 +817,16 @@ private struct SettingsView: View {
                 } footer: {
                     Text(t("When off, liquid in the grid view no longer responds to device movement.", "关闭后，网格视图中的液体将不再随手机晃动变化。"))
                 }
+
+                Section {
+                    NavigationLink {
+                        PrivacyPolicyView()
+                    } label: {
+                        Label(t("Privacy Policy", "隐私政策"), systemImage: "hand.raised")
+                    }
+                } header: {
+                    Text(t("Legal", "法律"))
+                }
             }
             .navigationTitle(t("Settings", "设置"))
             .toolbar {
@@ -832,6 +842,90 @@ private struct SettingsView: View {
                     store.renameGroup(from: oldName, to: renameInputText)
                 }
             }
+        }
+    }
+}
+
+private struct PrivacyPolicyView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Privacy Policy")
+                    .font(.title2.weight(.bold))
+
+                Text("Effective date: March 12, 2026")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                languageHeader("English")
+                policySection(
+                    title: "1. Data Processing",
+                    body: "Liquid Deadline does not collect, upload, sell, rent, or share your personal information. Your tasks, categories, descriptions, and settings are stored locally on your device only."
+                )
+                policySection(
+                    title: "2. Network Services",
+                    body: "The app does not provide account registration, cloud sync, or server-side storage. If this changes in a future version, this policy will be updated before that functionality is enabled."
+                )
+                policySection(
+                    title: "3. Third-Party Sharing",
+                    body: "The app does not share your personal information with third parties for advertising, analytics, or profiling."
+                )
+                policySection(
+                    title: "4. Your Responsibility",
+                    body: "You are responsible for how you use this app and for verifying any task, reminder, or deadline information you enter. The developer is not liable for losses, delays, missed deadlines, or other adverse consequences arising from the use of this app, to the extent permitted by applicable law."
+                )
+                policySection(
+                    title: "5. Contact",
+                    body: "If you have privacy questions, contact the developer through the contact method provided on the App Store product page."
+                )
+
+                Divider()
+                    .padding(.vertical, 4)
+
+                languageHeader("中文")
+                policySection(
+                    title: "1. 数据处理",
+                    body: "Liquid Deadline 不会收集、上传、出售、出租或共享你的个人信息。你的事项、分类、描述和设置仅保存在你的设备本地。"
+                )
+                policySection(
+                    title: "2. 网络服务",
+                    body: "本应用不提供账号注册、云同步或服务器端存储。如果未来版本新增相关能力，本政策会在功能启用前更新。"
+                )
+                policySection(
+                    title: "3. 第三方共享",
+                    body: "本应用不会为了广告、分析或画像目的向第三方共享你的个人信息。"
+                )
+                policySection(
+                    title: "4. 用户责任",
+                    body: "你应自行决定如何使用本应用，并自行核对你录入的事项、提醒和截止时间信息。在适用法律允许的范围内，开发者不对因使用本应用而产生的损失、延误、错过截止时间或其他不良后果承担责任。"
+                )
+                policySection(
+                    title: "5. 联系方式",
+                    body: "如果你对隐私问题有疑问，请通过 App Store 产品页提供的联系方式联系开发者。"
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+        }
+        .navigationTitle("Privacy Policy")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func languageHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.headline)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.secondary.opacity(0.12), in: Capsule())
+    }
+
+    private func policySection(title: String, body: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.headline)
+            Text(body)
+                .font(.body)
+                .foregroundStyle(.primary)
         }
     }
 }
