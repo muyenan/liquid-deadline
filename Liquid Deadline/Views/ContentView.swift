@@ -40,10 +40,16 @@ struct ContentView: View {
                         ScrollView {
                             TimelineView(.periodic(from: .now, by: 1.0)) { timeline in
                                 let currentNow = timeline.date
-                                VStack(spacing: 14) {
-                                    DeadlineSectionView(
+                                let sectionItems = store.items(in: section, at: currentNow)
+                                VStack(alignment: .leading, spacing: 14) {
+                                    SectionPageHeaderView(
                                         section: section,
-                                        items: store.items(in: section, at: currentNow),
+                                        itemCount: sectionItems.count,
+                                        usesLightText: usesLightText
+                                    )
+
+                                    DeadlineSectionView(
+                                        items: sectionItems,
                                         style: store.viewStyle,
                                         now: currentNow,
                                         usesLightText: usesLightText,
@@ -58,7 +64,7 @@ struct ContentView: View {
                             }
                         }
                     }
-                    .navigationTitle(section.title(in: language))
+                    .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
                             topMenu
@@ -213,6 +219,40 @@ struct ContentView: View {
     }
 }
 
+private struct SectionPageHeaderView: View {
+    @EnvironmentObject private var languageManager: LanguageManager
+    let section: DeadlineSection
+    let itemCount: Int
+    let usesLightText: Bool
+
+    private var primaryTextColor: Color {
+        usesLightText ? .white : .black
+    }
+
+    private var badgeBackground: Color {
+        usesLightText ? .white.opacity(0.2) : .black.opacity(0.12)
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(section.title(in: languageManager.currentLanguage))
+                .font(.system(size: 42, weight: .black, design: .rounded))
+                .foregroundStyle(primaryTextColor)
+
+            Text("\(itemCount)")
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(primaryTextColor)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(badgeBackground, in: Capsule())
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 2)
+        .padding(.top, 4)
+    }
+}
+
 private struct MenuCheckRow: View {
     let title: String
     let systemImage: String?
@@ -261,7 +301,6 @@ private extension DeadlineSection {
 
 private struct DeadlineSectionView: View {
     @EnvironmentObject private var languageManager: LanguageManager
-    let section: DeadlineSection
     let items: [DeadlineItem]
     let style: DeadlineViewStyle
     let now: Date
@@ -274,33 +313,12 @@ private struct DeadlineSectionView: View {
         GridItem(.flexible(), spacing: 10)
     ]
 
-    private var primaryTextColor: Color {
-        usesLightText ? .white : .black
-    }
-
     private var secondaryTextColor: Color {
         usesLightText ? .white.opacity(0.75) : .black.opacity(0.72)
     }
 
-    private var badgeBackground: Color {
-        usesLightText ? .white.opacity(0.2) : .black.opacity(0.12)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(section.title(in: languageManager.currentLanguage))
-                    .font(.headline)
-                    .foregroundStyle(primaryTextColor)
-                Spacer()
-                Text("\(items.count)")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(primaryTextColor)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(badgeBackground, in: Capsule())
-            }
-
             if items.isEmpty {
                 Text(languageManager.currentLanguage.text("No items yet", "暂无事项"))
                     .font(.footnote)
