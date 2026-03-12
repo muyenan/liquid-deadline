@@ -150,6 +150,7 @@ struct WidgetCategoryQuery: EntityQuery {
     }
 }
 
+@available(iOS 17.0, *)
 struct DeadlineWidgetConfigurationIntent: WidgetConfigurationIntent {
     static let title: LocalizedStringResource = "Widget Settings"
     static let description = IntentDescription("Choose task status, category, and sort order.")
