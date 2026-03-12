@@ -5,7 +5,7 @@ struct ContentView: View {
     @AppStorage("deadline_selected_section_v1") private var selectedSectionStorage = DeadlineSection.inProgress.storageValue
     @StateObject private var store = DeadlineStore()
     @State private var motion = MotionManager()
-    @State private var showingCreateSheet = false
+    @State private var createDraft: NewDeadlineDraft?
     @State private var showingSettingsSheet = false
     @State private var editingItem: DeadlineItem?
     
@@ -79,7 +79,7 @@ struct ContentView: View {
                         }
                         ToolbarItem(placement: .topBarTrailing) {
                             Button {
-                                showingCreateSheet = true
+                                createDraft = NewDeadlineDraft()
                             } label: {
                                 Image(systemName: "plus")
                                     .fontWeight(.semibold)
@@ -93,8 +93,8 @@ struct ContentView: View {
                 .tag(section)
             }
         }
-        .sheet(isPresented: $showingCreateSheet) {
-            NewDeadlineSheet(store: store)
+        .sheet(item: $createDraft) { draft in
+            NewDeadlineSheet(store: store, draft: draft)
         }
         .sheet(isPresented: $showingSettingsSheet) {
             SettingsView(store: store)
@@ -118,6 +118,14 @@ struct ContentView: View {
                 },
                 onComplete: { id in
                     store.completeItem(id: id)
+                },
+                onCreateNew: { draft in
+                    createDraft = draft
+                },
+                onMarkIncomplete: { id in
+                    if let destination = store.markItemIncomplete(id: id) {
+                        selectedSectionStorage = destination.storageValue
+                    }
                 },
                 onDelete: { id in
                     store.removeItem(id: id)
@@ -471,6 +479,8 @@ private struct EditDeadlineSheet: View {
     let onSaveActive: (UUID, String, String, String, Date, Date) -> Void
     let onSaveClosedDetail: (UUID, String) -> Void
     let onComplete: (UUID) -> Void
+    let onCreateNew: (NewDeadlineDraft) -> Void
+    let onMarkIncomplete: (UUID) -> Void
     let onDelete: (UUID) -> Void
 
     @State private var title: String = ""
@@ -481,6 +491,8 @@ private struct EditDeadlineSheet: View {
     @State private var showError = false
     @State private var showDeleteConfirm = false
     @State private var showCompleteConfirm = false
+    @State private var pendingCreateDraft: NewDeadlineDraft?
+    @State private var shouldMarkIncomplete = false
 
     private func t(_ english: String, _ chinese: String) -> String {
         languageManager.currentLanguage.text(english, chinese)
@@ -546,7 +558,12 @@ private struct EditDeadlineSheet: View {
                     Text(t("Time", "时间设置"))
                 } footer: {
                     if isClosedTask {
-                        Text(t("Closed tasks can only update description or be deleted. Start and end times are locked.", "已关闭任务只能修改描述或删除，起始和截止时间已锁定。"))
+                        Text(
+                            t(
+                                "Closed tasks keep their original time. You can still update the description, create a new task, or delete them.",
+                                "已关闭任务会保留原始时间，你仍然可以修改描述、创建新事项或删除。"
+                            )
+                        )
                     }
                 }
 
@@ -561,6 +578,26 @@ private struct EditDeadlineSheet: View {
                                 dismiss()
                             }
                             Button(t("Cancel", "取消"), role: .cancel) { }
+                        }
+                    }
+                }
+
+                if isClosedTask {
+                    Section {
+                        Button(t("Create New Task", "创建新事项")) {
+                            pendingCreateDraft = NewDeadlineDraft(
+                                title: title,
+                                category: selectedGroup,
+                                detail: detail
+                            )
+                            dismiss()
+                        }
+
+                        if currentSection == .completed {
+                            Button(t("Mark as Incomplete", "标记为未完成")) {
+                                shouldMarkIncomplete = true
+                                dismiss()
+                            }
                         }
                     }
                 }
@@ -604,6 +641,14 @@ private struct EditDeadlineSheet: View {
             .onChange(of: groups) { _, newGroups in
                 if !newGroups.contains(selectedGroup) {
                     selectedGroup = newGroups.first ?? DeadlineStore.fallbackGroupName
+                }
+            }
+            .onDisappear {
+                if let pendingCreateDraft {
+                    onCreateNew(pendingCreateDraft)
+                }
+                if shouldMarkIncomplete {
+                    onMarkIncomplete(item.id)
                 }
             }
         }

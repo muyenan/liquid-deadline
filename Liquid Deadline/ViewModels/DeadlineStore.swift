@@ -119,6 +119,13 @@ final class DeadlineStore: ObservableObject {
         items[index].completedAt = completedAt
     }
 
+    @discardableResult
+    func markItemIncomplete(id: UUID, at now: Date = .now) -> DeadlineSection? {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return nil }
+        items[index].completedAt = nil
+        return items[index].section(at: now)
+    }
+
     func removeItem(id: UUID) {
         items.removeAll { $0.id == id }
     }

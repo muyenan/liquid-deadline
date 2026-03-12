@@ -1,16 +1,49 @@
 import SwiftUI
 
+struct NewDeadlineDraft: Identifiable {
+    let id: UUID
+    let title: String
+    let category: String
+    let detail: String
+
+    init(id: UUID = UUID(), title: String = "", category: String = "", detail: String = "") {
+        self.id = id
+        self.title = title
+        self.category = category
+        self.detail = detail
+    }
+
+    init(item: DeadlineItem) {
+        self.init(
+            title: item.title,
+            category: item.category,
+            detail: item.detail
+        )
+    }
+}
+
 struct NewDeadlineSheet: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var languageManager: LanguageManager
     @ObservedObject var store: DeadlineStore
 
-    @State private var title: String = ""
-    @State private var selectedGroup: String = ""
-    @State private var detail: String = ""
-    @State private var startDate: Date = .now
-    @State private var endDate: Date = Calendar.current.date(byAdding: .hour, value: 4, to: .now) ?? .now
+    @State private var title: String
+    @State private var selectedGroup: String
+    @State private var detail: String
+    @State private var startDate: Date
+    @State private var endDate: Date
     @State private var showError = false
+
+    init(store: DeadlineStore, draft: NewDeadlineDraft = NewDeadlineDraft()) {
+        self.store = store
+
+        let now = Date.now
+        _title = State(initialValue: draft.title)
+        _selectedGroup = State(initialValue: draft.category)
+        _detail = State(initialValue: draft.detail)
+        _startDate = State(initialValue: now)
+        _endDate = State(initialValue: Calendar.current.date(byAdding: .hour, value: 4, to: now) ?? now)
+    }
 
     private func t(_ english: String, _ chinese: String) -> String {
         languageManager.currentLanguage.text(english, chinese)
