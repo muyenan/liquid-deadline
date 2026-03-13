@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Liquid Deadline Support</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f7f5;
+      --card: rgba(255, 255, 255, 0.88);
+      --text: #121212;
+      --muted: #5f5f5f;
+      --line: rgba(18, 18, 18, 0.08);
+      --accent: #e86a6a;
+      --accent-deep: #9b3b3b;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(255, 228, 228, 0.95), transparent 32%),
+        linear-gradient(180deg, #faf9f6 0%, var(--bg) 100%);
+      color: var(--text);
+      line-height: 1.7;
+    }
+
+    main {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 48px 20px 72px;
+    }
+
+    .hero {
+      margin-bottom: 24px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(232, 106, 106, 0.12);
+      color: var(--accent-deep);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    h1 {
+      margin: 16px 0 10px;
+      font-size: clamp(34px, 6vw, 56px);
+      line-height: 1.05;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .card {
+      padding: 28px;
+      margin-top: 18px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 18px 40px rgba(18, 18, 18, 0.08);
+    }
+
+    h2 {
+      margin: 0 0 10px;
+      font-size: 21px;
+    }
+
+    p, li {
+      margin: 0;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    li + li {
+      margin-top: 10px;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(18, 18, 18, 0.06);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 18px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 18px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: white;
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .button.secondary {
+      background: rgba(18, 18, 18, 0.06);
+      color: var(--text);
+    }
+
+    .divider {
+      height: 1px;
+      margin: 28px 0 6px;
+      background: var(--line);
+    }
+
+    a {
+      color: var(--accent-deep);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <span class="eyebrow">Liquid Deadline</span>
+      <h1>Support</h1>
+      <p class="subtitle">Help, FAQ, and contact information for Liquid Deadline.</p>
+      <div class="actions">
+        <a class="button" href="mailto:qian.mo.a@foxmail.com">Contact Support</a>
+        <a class="button secondary" href="./privacy-policy.html">Privacy Policy</a>
+      </div>
+    </section>
+
+    <span class="pill">English</span>
+
+    <section class="card">
+      <h2>About the App</h2>
+      <p>Liquid Deadline is a visual deadline manager designed to help you track tasks from start to finish. You can create tasks with titles, categories, notes, start times, and end times, then review them by status, progress, and remaining time.</p>
+    </section>
+
+    <section class="card">
+      <h2>Key Features</h2>
+      <ul>
+        <li>Create, edit, and delete deadlines with title, category, description, start time, and end time.</li>
+        <li>View tasks by status: Not Started, In Progress, Completed, and Ended.</li>
+        <li>Filter by category and sort by added time or remaining time.</li>
+        <li>Switch between progress bar view and grid view.</li>
+        <li>Use Home Screen and Lock Screen widgets to see upcoming tasks quickly.</li>
+        <li>Store your tasks and settings locally on your device.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>FAQ</h2>
+      <ul>
+        <li><strong>How do I add a deadline?</strong> Open the app and tap the add button to create a new task with its title, category, time range, and notes.</li>
+        <li><strong>How do widgets work?</strong> Widgets display nearby tasks based on status, category, and sorting options. Update the widget settings to change what is shown.</li>
+        <li><strong>Is my data synced online?</strong> No. The current version stores tasks locally on your device only.</li>
+        <li><strong>Why is a task marked ended?</strong> A task moves to Ended when the current time has passed its deadline and it was not manually marked completed before then.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Contact</h2>
+      <p>For support, feedback, or bug reports, email <a href="mailto:qian.mo.a@foxmail.com">qian.mo.a@foxmail.com</a>.</p>
+      <p style="margin-top: 10px;">Suggested response time: 3 to 5 business days.</p>
+    </section>
+
+    <div class="divider"></div>
+    <span class="pill">中文</span>
+
+    <section class="card">
+      <h2>应用简介</h2>
+      <p>Liquid Deadline 是一款专注于截止时间管理的可视化效率应用，帮助你从开始到结束清晰追踪每一项任务。你可以为事项设置标题、分类、备注、开始时间和截止时间，并按状态、进度和剩余时间查看它们。</p>
+    </section>
+
+    <section class="card">
+      <h2>主要功能</h2>
+      <ul>
+        <li>支持创建、编辑和删除事项，包含标题、分类、描述、开始时间和截止时间。</li>
+        <li>按未开始、进行中、已完成、已结束查看任务状态。</li>
+        <li>支持按分类筛选，并按添加时间或剩余时间排序。</li>
+        <li>支持进度条视图和网格视图两种展示方式。</li>
+        <li>支持主屏幕和锁屏小组件，快速查看临近事项。</li>
+        <li>任务和设置仅保存在设备本地。</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>常见问题</h2>
+      <ul>
+        <li><strong>如何添加一个 deadline？</strong> 打开应用后，点击新增按钮，填写标题、分类、时间范围和备注即可创建事项。</li>
+        <li><strong>小组件显示内容可以调整吗？</strong> 可以。你可以在小组件设置中选择状态、分类和排序方式。</li>
+        <li><strong>数据会上传到云端吗？</strong> 不会。当前版本仅在本地保存任务数据。</li>
+        <li><strong>为什么任务会显示为“已结束”？</strong> 当当前时间超过截止时间，且任务未被手动标记为完成时，它会进入“已结束”状态。</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>联系方式</h2>
+      <p>如需技术支持、提交反馈或报告问题，请发送邮件至 <a href="mailto:qian.mo.a@foxmail.com">qian.mo.a@foxmail.com</a>。</p>
+      <p style="margin-top: 10px;">建议回复时间：3 到 5 个工作日。</p>
+    </section>
+  </main>
+</body>
+</html>
