@@ -40,9 +40,9 @@ struct ContentView: View {
     }
 
     var body: some View {
-        TabView(selection: selectedSectionBinding) {
-            ForEach(DeadlineSection.allCases) { section in
-                NavigationStack {
+        NavigationStack {
+            TabView(selection: selectedSectionBinding) {
+                ForEach(DeadlineSection.allCases) { section in
                     ZStack {
                         LiquidBackgroundView(
                             backgroundStyle: store.backgroundStyle
@@ -75,36 +75,36 @@ struct ContentView: View {
                             }
                         }
                     }
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            topMenu
-                        }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            subscriptionRefreshButton
-                        }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                showingSettingsSheet = true
-                            } label: {
-                                Image(systemName: "gearshape")
-                                    .fontWeight(.semibold)
-                            }
-                        }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                createDraft = NewDeadlineDraft()
-                            } label: {
-                                Image(systemName: "plus")
-                                    .fontWeight(.semibold)
-                            }
-                        }
+                    .tabItem {
+                        Label(section.title(in: language), systemImage: section.tabIcon)
+                    }
+                    .tag(section)
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    topMenu
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    subscriptionRefreshButton
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingSettingsSheet = true
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .fontWeight(.semibold)
                     }
                 }
-                .tabItem {
-                    Label(section.title(in: language), systemImage: section.tabIcon)
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        createDraft = NewDeadlineDraft()
+                    } label: {
+                        Image(systemName: "plus")
+                            .fontWeight(.semibold)
+                    }
                 }
-                .tag(section)
             }
         }
         .sheet(item: $createDraft) { draft in
