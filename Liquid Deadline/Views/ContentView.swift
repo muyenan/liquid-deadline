@@ -372,9 +372,17 @@ private struct DeadlineSectionView: View {
 
     private let gridSpacing: CGFloat = 8
     private let gridItemWidth: CGFloat = 172
+    private let compactGridColumns = [
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8)
+    ]
 
     private var secondaryTextColor: Color {
         usesLightText ? .white.opacity(0.75) : .black.opacity(0.72)
+    }
+
+    private var usesAdaptivePadGrid: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
     }
 
     var body: some View {
@@ -397,15 +405,29 @@ private struct DeadlineSectionView: View {
                     }
                 }
             } else {
-                FixedWidthGridLayout(itemWidth: gridItemWidth, spacing: gridSpacing) {
-                    ForEach(items) { item in
-                        OilGridCellView(
-                            item: item,
-                            now: now,
-                            usesLightText: usesLightText,
-                            liquidMotionEnabled: liquidMotionEnabled,
-                            onTap: { onSelectItem(item) }
-                        )
+                if usesAdaptivePadGrid {
+                    FixedWidthGridLayout(itemWidth: gridItemWidth, spacing: gridSpacing) {
+                        ForEach(items) { item in
+                            OilGridCellView(
+                                item: item,
+                                now: now,
+                                usesLightText: usesLightText,
+                                liquidMotionEnabled: liquidMotionEnabled,
+                                onTap: { onSelectItem(item) }
+                            )
+                        }
+                    }
+                } else {
+                    LazyVGrid(columns: compactGridColumns, spacing: gridSpacing) {
+                        ForEach(items) { item in
+                            OilGridCellView(
+                                item: item,
+                                now: now,
+                                usesLightText: usesLightText,
+                                liquidMotionEnabled: liquidMotionEnabled,
+                                onTap: { onSelectItem(item) }
+                            )
+                        }
                     }
                 }
             }
