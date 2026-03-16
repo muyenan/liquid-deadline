@@ -14,6 +14,8 @@ enum DeadlineStorage {
     static let groupsStorageKey = "deadline_oil_groups_v1"
     static let backgroundStyleStorageKey = "deadline_oil_background_style_v1"
     static let liquidMotionEnabledStorageKey = "deadline_oil_liquid_motion_enabled_v1"
+    static let subscriptionsStorageKey = "deadline_oil_subscriptions_v1"
+    static let lastSubscriptionRefreshStorageKey = "deadline_oil_last_subscription_refresh_v1"
 
     static let sharedDefaults: UserDefaults = {
         UserDefaults(suiteName: appGroupID) ?? .standard
@@ -28,7 +30,9 @@ enum DeadlineStorage {
         selectedFilterGroupStorageKey,
         groupsStorageKey,
         backgroundStyleStorageKey,
-        liquidMotionEnabledStorageKey
+        liquidMotionEnabledStorageKey,
+        subscriptionsStorageKey,
+        lastSubscriptionRefreshStorageKey
     ]
 
     static func migrateStandardDefaultsIfNeeded() {

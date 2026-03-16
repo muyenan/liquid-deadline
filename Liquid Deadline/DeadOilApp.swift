@@ -5,6 +5,7 @@
 //  Created by 黔陌 on 2/13/26.
 //
 
+import BackgroundTasks
 import SwiftUI
 import Combine
 
@@ -96,13 +97,45 @@ final class LanguageManager: ObservableObject {
 @main
 struct DeadOilApp: App {
     @StateObject private var languageManager = LanguageManager()
+    @StateObject private var store = DeadlineStore()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(store: store)
                 .environmentObject(languageManager)
                 .environment(\.locale, languageManager.locale)
                 .preferredColorScheme(.light)
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            handleScenePhaseChange(newPhase)
+        }
+        .backgroundTask(.appRefresh(SubscriptionRefreshScheduler.identifier)) {
+            await handleBackgroundRefresh()
+        }
+    }
+
+    private func handleScenePhaseChange(_ scenePhase: ScenePhase) {
+        switch scenePhase {
+        case .active:
+            store.extendRecurringItemsIfNeeded(at: .now)
+            Task {
+                await store.refreshSubscriptionsIfNeeded(now: .now)
+            }
+        case .background:
+            SubscriptionRefreshScheduler.scheduleNextRefresh()
+        case .inactive:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    private func handleBackgroundRefresh() async {
+        await MainActor.run {
+            store.extendRecurringItemsIfNeeded(at: .now)
+        }
+        await store.refreshSubscriptions(force: true, now: .now)
+        SubscriptionRefreshScheduler.scheduleNextRefresh()
     }
 }

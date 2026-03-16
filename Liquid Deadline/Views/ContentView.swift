@@ -3,12 +3,12 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var languageManager: LanguageManager
     @AppStorage("deadline_selected_section_v1") private var selectedSectionStorage = DeadlineSection.inProgress.storageValue
-    @StateObject private var store = DeadlineStore()
+    @ObservedObject var store: DeadlineStore
     @State private var motion = MotionManager()
     @State private var createDraft: NewDeadlineDraft?
     @State private var showingSettingsSheet = false
     @State private var editingItem: DeadlineItem?
-    
+
     private var usesLightText: Bool {
         store.backgroundStyle.usesLightForeground
     }
@@ -25,6 +25,17 @@ struct ContentView: View {
         Binding(
             get: { DeadlineSection(storageValue: selectedSectionStorage) },
             set: { selectedSectionStorage = $0.storageValue }
+        )
+    }
+
+    private var syncErrorBinding: Binding<Bool> {
+        Binding(
+            get: { store.lastSyncErrorMessage != nil },
+            set: { newValue in
+                if newValue == false {
+                    store.lastSyncErrorMessage = nil
+                }
+            }
         )
     }
 
@@ -70,6 +81,9 @@ struct ContentView: View {
                             topMenu
                         }
                         ToolbarItem(placement: .topBarTrailing) {
+                            subscriptionRefreshButton
+                        }
+                        ToolbarItem(placement: .topBarTrailing) {
                             Button {
                                 showingSettingsSheet = true
                             } label: {
@@ -103,14 +117,15 @@ struct ContentView: View {
             EditDeadlineSheet(
                 item: item,
                 groups: store.groups,
-                onSaveActive: { id, title, category, detail, startDate, endDate in
+                onSaveActive: { id, title, category, detail, startDate, endDate, scope in
                     store.updateItem(
                         id: id,
                         title: title,
                         category: category,
                         detail: detail,
                         startDate: startDate,
-                        endDate: endDate
+                        endDate: endDate,
+                        scope: scope
                     )
                 },
                 onSaveClosedDetail: { id, detail in
@@ -127,14 +142,25 @@ struct ContentView: View {
                         selectedSectionStorage = destination.storageValue
                     }
                 },
-                onDelete: { id in
-                    store.removeItem(id: id)
+                onDelete: { id, scope in
+                    store.removeItem(id: id, scope: scope)
                 }
             )
+        }
+        .alert(t("Sync Failed", "同步失败"), isPresented: syncErrorBinding) {
+            Button(t("OK", "好的"), role: .cancel) {
+                store.lastSyncErrorMessage = nil
+            }
+        } message: {
+            Text(store.lastSyncErrorMessage ?? "")
         }
         .environmentObject(motion)
         .onAppear {
             store.applyDefaultGroupLocalizationIfNeeded(language: languageManager.currentLanguage)
+            store.extendRecurringItemsIfNeeded(at: .now)
+            Task {
+                await store.refreshSubscriptionsIfNeeded(now: .now)
+            }
         }
         .onChange(of: languageManager.currentLanguage) { _, newLanguage in
             store.applyDefaultGroupLocalizationIfNeeded(language: newLanguage)
@@ -216,9 +242,37 @@ struct ContentView: View {
             } label: {
                 Text(t("Display Options", "显示选项"))
             }
+
+            Divider()
+
+            Button {
+                Task {
+                    await store.refreshSubscriptions(force: true, now: .now)
+                }
+            } label: {
+                Label(t("Refresh Subscriptions", "刷新订阅"), systemImage: "arrow.clockwise")
+            }
         } label: {
             Image(systemName: "line.3.horizontal.decrease")
                 .fontWeight(.semibold)
+        }
+    }
+
+    private var subscriptionRefreshButton: some View {
+        Group {
+            if store.isRefreshingSubscriptions {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Button {
+                    Task {
+                        await store.refreshSubscriptions(force: true, now: .now)
+                    }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .fontWeight(.semibold)
+                }
+            }
         }
     }
 
@@ -309,6 +363,7 @@ private extension DeadlineSection {
 
 private struct DeadlineSectionView: View {
     @EnvironmentObject private var languageManager: LanguageManager
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let items: [DeadlineItem]
     let style: DeadlineViewStyle
     let now: Date
@@ -316,13 +371,42 @@ private struct DeadlineSectionView: View {
     let liquidMotionEnabled: Bool
     let onSelectItem: (DeadlineItem) -> Void
 
-    private let gridColumns = [
+    @State private var availableWidth: CGFloat = 0
+
+    private let compactGridColumns = [
         GridItem(.flexible(), spacing: 10),
         GridItem(.flexible(), spacing: 10)
     ]
+    private let gridSpacing: CGFloat = 10
+    private let padLandscapeGridItemWidth: CGFloat = 220
 
     private var secondaryTextColor: Color {
         usesLightText ? .white.opacity(0.75) : .black.opacity(0.72)
+    }
+
+    private var usesPadLandscapeGrid: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+        && horizontalSizeClass == .regular
+        && availableWidth >= 900
+    }
+
+    private var padLandscapeGridColumnCount: Int {
+        let rawCount = Int((availableWidth + gridSpacing) / (padLandscapeGridItemWidth + gridSpacing))
+        return max(rawCount, 2)
+    }
+
+    private var padLandscapeGridColumns: [GridItem] {
+        Array(
+            repeating: GridItem(.fixed(padLandscapeGridItemWidth), spacing: gridSpacing),
+            count: padLandscapeGridColumnCount
+        )
+    }
+
+    private var padLandscapeSidePadding: CGFloat {
+        let totalItemWidth = CGFloat(padLandscapeGridColumnCount) * padLandscapeGridItemWidth
+        let totalSpacing = CGFloat(max(padLandscapeGridColumnCount - 1, 0)) * gridSpacing
+        let remainingWidth = availableWidth - totalItemWidth - totalSpacing
+        return max(remainingWidth / 2, 0)
     }
 
     var body: some View {
@@ -345,7 +429,10 @@ private struct DeadlineSectionView: View {
                     }
                 }
             } else {
-                LazyVGrid(columns: gridColumns, spacing: 10) {
+                LazyVGrid(
+                    columns: usesPadLandscapeGrid ? padLandscapeGridColumns : compactGridColumns,
+                    spacing: gridSpacing
+                ) {
                     ForEach(items) { item in
                         OilGridCellView(
                             item: item,
@@ -356,9 +443,27 @@ private struct DeadlineSectionView: View {
                         )
                     }
                 }
+                .padding(.horizontal, usesPadLandscapeGrid ? padLandscapeSidePadding : 0)
             }
         }
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(key: DeadlineSectionWidthPreferenceKey.self, value: proxy.size.width)
+            }
+        }
+        .onPreferenceChange(DeadlineSectionWidthPreferenceKey.self) { newWidth in
+            availableWidth = newWidth
+        }
         .liquidGlassCard(cornerRadius: 22)
+    }
+}
+
+private struct DeadlineSectionWidthPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
@@ -476,12 +581,12 @@ private struct EditDeadlineSheet: View {
 
     let item: DeadlineItem
     let groups: [String]
-    let onSaveActive: (UUID, String, String, String, Date, Date) -> Void
+    let onSaveActive: (UUID, String, String, String, Date, Date, DeadlineRecurringChangeScope) -> Void
     let onSaveClosedDetail: (UUID, String) -> Void
     let onComplete: (UUID) -> Void
     let onCreateNew: (NewDeadlineDraft) -> Void
     let onMarkIncomplete: (UUID) -> Void
-    let onDelete: (UUID) -> Void
+    let onDelete: (UUID, DeadlineRecurringChangeScope) -> Void
 
     @State private var title: String = ""
     @State private var selectedGroup: String = ""
@@ -491,6 +596,8 @@ private struct EditDeadlineSheet: View {
     @State private var showError = false
     @State private var showDeleteConfirm = false
     @State private var showCompleteConfirm = false
+    @State private var showRepeatSaveOptions = false
+    @State private var showRepeatDeleteOptions = false
     @State private var pendingCreateDraft: NewDeadlineDraft?
     @State private var shouldMarkIncomplete = false
 
@@ -510,6 +617,14 @@ private struct EditDeadlineSheet: View {
         item.canComplete(at: .now)
     }
 
+    private var isSubscriptionManaged: Bool {
+        item.sourceKind == .subscribedURL
+    }
+
+    private var isRecurringTask: Bool {
+        item.belongsToRepeatSeries
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -523,6 +638,17 @@ private struct EditDeadlineSheet: View {
                                 .foregroundStyle(.secondary)
                             TextEditor(text: $detail)
                                 .frame(minHeight: 110)
+                        }
+                    } else if isSubscriptionManaged {
+                        LabeledContent(t("Title", "标题"), value: title)
+                        LabeledContent(t("Category", "分类"), value: selectedGroup)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(t("Description", "描述"))
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                            Text(detail.isEmpty ? t("No description", "无描述") : detail)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .foregroundStyle(detail.isEmpty ? .secondary : .primary)
                         }
                     } else {
                         TextField(t("Title", "标题"), text: $title)
@@ -550,6 +676,9 @@ private struct EditDeadlineSheet: View {
                         if let completedAt = item.completedAt {
                             LabeledContent(t("Completed At", "完成时间"), value: completedAt.formatted(date: .abbreviated, time: .shortened))
                         }
+                    } else if isSubscriptionManaged {
+                        LabeledContent(t("Start Time", "起始时间"), value: startDate.formatted(date: .abbreviated, time: .shortened))
+                        LabeledContent(t("End Time", "结束时间"), value: endDate.formatted(date: .abbreviated, time: .shortened))
                     } else {
                         DatePicker(t("Start Time", "起始时间"), selection: $startDate, displayedComponents: [.date, .hourAndMinute])
                         DatePicker(t("End Time", "结束时间"), selection: $endDate, displayedComponents: [.date, .hourAndMinute])
@@ -562,6 +691,13 @@ private struct EditDeadlineSheet: View {
                             t(
                                 "Closed tasks keep their original time. You can still update the description, create a new task, or delete them.",
                                 "已关闭任务会保留原始时间，你仍然可以修改描述、创建新事项或删除。"
+                            )
+                        )
+                    } else if isSubscriptionManaged {
+                        Text(
+                            t(
+                                "Tasks from URL subscriptions are refreshed by the feed. Change the source calendar or manage the subscription in Settings.",
+                                "通过 URL 订阅导入的事项会随订阅源刷新。请在源日历中修改，或前往设置管理订阅。"
                             )
                         )
                     }
@@ -602,16 +738,35 @@ private struct EditDeadlineSheet: View {
                     }
                 }
 
-                Section {
-                    Button(t("Delete Task", "删除事项"), role: .destructive) {
-                        showDeleteConfirm = true
-                    }
-                    .confirmationDialog(t("Delete this task?", "确认删除该事项？"), isPresented: $showDeleteConfirm, titleVisibility: .visible) {
-                        Button(t("Delete", "删除"), role: .destructive) {
-                            onDelete(item.id)
-                            dismiss()
+                if !isSubscriptionManaged {
+                    Section {
+                        Button(t("Delete Task", "删除事项"), role: .destructive) {
+                            if isRecurringTask {
+                                showRepeatDeleteOptions = true
+                            } else {
+                                showDeleteConfirm = true
+                            }
                         }
-                        Button(t("Cancel", "取消"), role: .cancel) { }
+                        .confirmationDialog(t("Delete this task?", "确认删除该事项？"), isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                            Button(t("Delete", "删除"), role: .destructive) {
+                                onDelete(item.id, .thisEvent)
+                                dismiss()
+                            }
+                            Button(t("Cancel", "取消"), role: .cancel) { }
+                        }
+                        .confirmationDialog(t("Delete recurring task", "删除重复事项"), isPresented: $showRepeatDeleteOptions, titleVisibility: .visible) {
+                            Button(t("Only This Event", "仅删除本次日程"), role: .destructive) {
+                                onDelete(item.id, .thisEvent)
+                                dismiss()
+                            }
+                            Button(t("This and Future Events", "删除将来所有日程"), role: .destructive) {
+                                onDelete(item.id, .futureEvents)
+                                dismiss()
+                            }
+                            Button(t("Cancel", "取消"), role: .cancel) { }
+                        } message: {
+                            Text(t("Choose whether to delete only this event or this event and all following events in the series.", "选择只删除本次日程，或删除本次及之后的所有日程。"))
+                        }
                     }
                 }
 
@@ -627,9 +782,20 @@ private struct EditDeadlineSheet: View {
                     Button(t("Cancel", "取消")) { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(t("Save", "保存")) { save() }
+                    Button(isSubscriptionManaged ? t("Done", "完成") : t("Save", "保存")) { save() }
                         .bold()
                 }
+            }
+            .confirmationDialog(t("Edit recurring task", "修改重复事项"), isPresented: $showRepeatSaveOptions, titleVisibility: .visible) {
+                Button(t("Only This Event", "仅修改本次日程")) {
+                    performSave(scope: .thisEvent)
+                }
+                Button(t("This and Future Events", "修改将来所有日程")) {
+                    performSave(scope: .futureEvents)
+                }
+                Button(t("Cancel", "取消"), role: .cancel) { }
+            } message: {
+                Text(t("Choose whether the changes apply only to this event or to this event and all following events in the series.", "选择本次修改仅作用于当前日程，或作用于当前及之后的所有日程。"))
             }
             .onAppear {
                 title = item.title
@@ -655,6 +821,11 @@ private struct EditDeadlineSheet: View {
     }
 
     private func save() {
+        if isSubscriptionManaged {
+            dismiss()
+            return
+        }
+
         if isClosedTask {
             onSaveClosedDetail(item.id, detail)
             dismiss()
@@ -669,7 +840,16 @@ private struct EditDeadlineSheet: View {
             return
         }
 
-        onSaveActive(item.id, title, selectedGroup, detail, startDate, endDate)
+        if isRecurringTask {
+            showRepeatSaveOptions = true
+            return
+        }
+
+        performSave(scope: .thisEvent)
+    }
+
+    private func performSave(scope: DeadlineRecurringChangeScope) {
+        onSaveActive(item.id, title, selectedGroup, detail, startDate, endDate, scope)
         dismiss()
     }
 }
@@ -811,6 +991,47 @@ private struct SettingsView: View {
                 }
 
                 Section {
+                    if store.subscriptions.isEmpty {
+                        Text(t("No URL subscriptions yet.", "还没有 URL 订阅。"))
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(store.subscriptions) { subscription in
+                            SubscriptionRow(
+                                subscription: subscription,
+                                language: languageManager.currentLanguage
+                            )
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    store.removeSubscription(id: subscription.id)
+                                } label: {
+                                    Label(t("Delete", "删除"), systemImage: "trash")
+                                }
+                            }
+                        }
+                    }
+
+                    Button {
+                        Task {
+                            await store.refreshSubscriptions(force: true, now: .now)
+                        }
+                    } label: {
+                        HStack {
+                            if store.isRefreshingSubscriptions {
+                                ProgressView()
+                                    .controlSize(.small)
+                            }
+                            Text(t("Refresh All Subscriptions", "刷新全部订阅"))
+                        }
+                    }
+                    .disabled(store.isRefreshingSubscriptions || store.subscriptions.isEmpty)
+                } header: {
+                    Text(t("Subscriptions", "订阅"))
+                } footer: {
+                    Text(t("Deleting a subscription also removes the tasks imported from that URL.", "删除订阅时，也会删除从该 URL 导入的事项。"))
+                }
+
+                Section {
                     Toggle(t("Liquid Motion", "液态动效"), isOn: $store.liquidMotionEnabled)
                 } header: {
                     Text(t("Motion", "动效"))
@@ -846,6 +1067,48 @@ private struct SettingsView: View {
     }
 }
 
+private struct SubscriptionRow: View {
+    let subscription: DeadlineSubscription
+    let language: AppLanguage
+
+    private func t(_ english: String, _ chinese: String) -> String {
+        language.text(english, chinese)
+    }
+
+    private var secondaryText: String {
+        if let lastErrorMessage = subscription.lastErrorMessage, lastErrorMessage.isEmpty == false {
+            return lastErrorMessage
+        }
+
+        if let lastSyncedAt = subscription.lastSyncedAt {
+            return t("Last synced", "上次同步") + " " + lastSyncedAt.formatted(date: .abbreviated, time: .shortened)
+        }
+
+        if let lastAttemptedAt = subscription.lastAttemptedAt {
+            return t("Last attempted", "上次尝试") + " " + lastAttemptedAt.formatted(date: .abbreviated, time: .shortened)
+        }
+
+        return t("Not synced yet", "尚未同步")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(subscription.displayName)
+                .font(.body.weight(.semibold))
+
+            Text(subscription.category)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text(secondaryText)
+                .font(.caption2)
+                .foregroundStyle(subscription.lastErrorMessage == nil ? Color.secondary : Color.red)
+                .lineLimit(2)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
 private struct PrivacyPolicyView: View {
     var body: some View {
         ScrollView {
@@ -864,7 +1127,7 @@ private struct PrivacyPolicyView: View {
                 )
                 policySection(
                     title: "2. Network Services",
-                    body: "The app does not provide account registration, cloud sync, or server-side storage. If this changes in a future version, this policy will be updated before that functionality is enabled."
+                    body: "The app does not provide account registration, cloud sync, or server-side storage. If you choose to subscribe to an external calendar URL, the app fetches that feed directly from your device to import or refresh tasks. The developer does not receive or store that calendar data on a server."
                 )
                 policySection(
                     title: "3. Third-Party Sharing",
@@ -889,7 +1152,7 @@ private struct PrivacyPolicyView: View {
                 )
                 policySection(
                     title: "2. 网络服务",
-                    body: "本应用不提供账号注册、云同步或服务器端存储。如果未来版本新增相关能力，本政策会在功能启用前更新。"
+                    body: "本应用不提供账号注册、云同步或服务器端存储。如果你选择订阅外部日历 URL，应用会仅在你的设备上直接拉取该日历内容，用于导入或刷新事项。开发者不会在服务器端接收或存储这些日历数据。"
                 )
                 policySection(
                     title: "3. 第三方共享",

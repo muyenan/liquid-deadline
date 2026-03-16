@@ -152,6 +152,14 @@ struct DeadlineItem: Identifiable, Codable, Hashable {
     var endDate: Date
     var completedAt: Date?
     var createdAt: Date
+    var sourceKind: DeadlineItemSourceKind
+    var subscriptionID: UUID?
+    var externalEventIdentifier: String?
+    var originalStartDateWasMissing: Bool
+    var isAllDay: Bool
+    var repeatSeriesID: UUID?
+    var repeatOccurrenceIndex: Int
+    var repeatRule: DeadlineRepeatRule?
 
     init(
         id: UUID = UUID(),
@@ -161,7 +169,15 @@ struct DeadlineItem: Identifiable, Codable, Hashable {
         startDate: Date,
         endDate: Date,
         completedAt: Date? = nil,
-        createdAt: Date = .now
+        createdAt: Date = .now,
+        sourceKind: DeadlineItemSourceKind = .manual,
+        subscriptionID: UUID? = nil,
+        externalEventIdentifier: String? = nil,
+        originalStartDateWasMissing: Bool = false,
+        isAllDay: Bool = false,
+        repeatSeriesID: UUID? = nil,
+        repeatOccurrenceIndex: Int = 0,
+        repeatRule: DeadlineRepeatRule? = nil
     ) {
         self.id = id
         self.title = title
@@ -171,6 +187,14 @@ struct DeadlineItem: Identifiable, Codable, Hashable {
         self.endDate = endDate
         self.completedAt = completedAt
         self.createdAt = createdAt
+        self.sourceKind = sourceKind
+        self.subscriptionID = subscriptionID
+        self.externalEventIdentifier = externalEventIdentifier
+        self.originalStartDateWasMissing = originalStartDateWasMissing
+        self.isAllDay = isAllDay
+        self.repeatSeriesID = repeatSeriesID
+        self.repeatOccurrenceIndex = repeatOccurrenceIndex
+        self.repeatRule = repeatRule
     }
 
     func section(at now: Date) -> DeadlineSection {
@@ -210,6 +234,14 @@ struct DeadlineItem: Identifiable, Codable, Hashable {
     var isClosed: Bool {
         completedAt != nil
     }
+
+    var belongsToRepeatSeries: Bool {
+        repeatSeriesID != nil
+    }
+
+    var isRepeatSeed: Bool {
+        repeatRule != nil && repeatSeriesID != nil
+    }
 }
 
 extension DeadlineItem {
@@ -244,6 +276,14 @@ extension DeadlineItem {
         case endDate
         case completedAt
         case createdAt
+        case sourceKind
+        case subscriptionID
+        case externalEventIdentifier
+        case originalStartDateWasMissing
+        case isAllDay
+        case repeatSeriesID
+        case repeatOccurrenceIndex
+        case repeatRule
     }
 
     init(from decoder: Decoder) throws {
@@ -256,6 +296,14 @@ extension DeadlineItem {
         endDate = try container.decode(Date.self, forKey: .endDate)
         completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
+        sourceKind = try container.decodeIfPresent(DeadlineItemSourceKind.self, forKey: .sourceKind) ?? .manual
+        subscriptionID = try container.decodeIfPresent(UUID.self, forKey: .subscriptionID)
+        externalEventIdentifier = try container.decodeIfPresent(String.self, forKey: .externalEventIdentifier)
+        originalStartDateWasMissing = try container.decodeIfPresent(Bool.self, forKey: .originalStartDateWasMissing) ?? false
+        isAllDay = try container.decodeIfPresent(Bool.self, forKey: .isAllDay) ?? false
+        repeatSeriesID = try container.decodeIfPresent(UUID.self, forKey: .repeatSeriesID)
+        repeatOccurrenceIndex = try container.decodeIfPresent(Int.self, forKey: .repeatOccurrenceIndex) ?? 0
+        repeatRule = try container.decodeIfPresent(DeadlineRepeatRule.self, forKey: .repeatRule)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -268,5 +316,13 @@ extension DeadlineItem {
         try container.encode(endDate, forKey: .endDate)
         try container.encodeIfPresent(completedAt, forKey: .completedAt)
         try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(sourceKind, forKey: .sourceKind)
+        try container.encodeIfPresent(subscriptionID, forKey: .subscriptionID)
+        try container.encodeIfPresent(externalEventIdentifier, forKey: .externalEventIdentifier)
+        try container.encode(originalStartDateWasMissing, forKey: .originalStartDateWasMissing)
+        try container.encode(isAllDay, forKey: .isAllDay)
+        try container.encodeIfPresent(repeatSeriesID, forKey: .repeatSeriesID)
+        try container.encode(repeatOccurrenceIndex, forKey: .repeatOccurrenceIndex)
+        try container.encodeIfPresent(repeatRule, forKey: .repeatRule)
     }
 }
