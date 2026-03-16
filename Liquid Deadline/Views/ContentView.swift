@@ -363,7 +363,6 @@ private extension DeadlineSection {
 
 private struct DeadlineSectionView: View {
     @EnvironmentObject private var languageManager: LanguageManager
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     let items: [DeadlineItem]
     let style: DeadlineViewStyle
     let now: Date
@@ -371,42 +370,11 @@ private struct DeadlineSectionView: View {
     let liquidMotionEnabled: Bool
     let onSelectItem: (DeadlineItem) -> Void
 
-    @State private var availableWidth: CGFloat = 0
-
-    private let compactGridColumns = [
-        GridItem(.flexible(), spacing: 10),
-        GridItem(.flexible(), spacing: 10)
-    ]
-    private let gridSpacing: CGFloat = 10
-    private let padLandscapeGridItemWidth: CGFloat = 220
+    private let gridSpacing: CGFloat = 8
+    private let gridItemWidth: CGFloat = 172
 
     private var secondaryTextColor: Color {
         usesLightText ? .white.opacity(0.75) : .black.opacity(0.72)
-    }
-
-    private var usesPadLandscapeGrid: Bool {
-        UIDevice.current.userInterfaceIdiom == .pad
-        && horizontalSizeClass == .regular
-        && availableWidth >= 900
-    }
-
-    private var padLandscapeGridColumnCount: Int {
-        let rawCount = Int((availableWidth + gridSpacing) / (padLandscapeGridItemWidth + gridSpacing))
-        return max(rawCount, 2)
-    }
-
-    private var padLandscapeGridColumns: [GridItem] {
-        Array(
-            repeating: GridItem(.fixed(padLandscapeGridItemWidth), spacing: gridSpacing),
-            count: padLandscapeGridColumnCount
-        )
-    }
-
-    private var padLandscapeSidePadding: CGFloat {
-        let totalItemWidth = CGFloat(padLandscapeGridColumnCount) * padLandscapeGridItemWidth
-        let totalSpacing = CGFloat(max(padLandscapeGridColumnCount - 1, 0)) * gridSpacing
-        let remainingWidth = availableWidth - totalItemWidth - totalSpacing
-        return max(remainingWidth / 2, 0)
     }
 
     var body: some View {
@@ -429,10 +397,7 @@ private struct DeadlineSectionView: View {
                     }
                 }
             } else {
-                LazyVGrid(
-                    columns: usesPadLandscapeGrid ? padLandscapeGridColumns : compactGridColumns,
-                    spacing: gridSpacing
-                ) {
+                FixedWidthGridLayout(itemWidth: gridItemWidth, spacing: gridSpacing) {
                     ForEach(items) { item in
                         OilGridCellView(
                             item: item,
@@ -443,27 +408,68 @@ private struct DeadlineSectionView: View {
                         )
                     }
                 }
-                .padding(.horizontal, usesPadLandscapeGrid ? padLandscapeSidePadding : 0)
             }
-        }
-        .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .preference(key: DeadlineSectionWidthPreferenceKey.self, value: proxy.size.width)
-            }
-        }
-        .onPreferenceChange(DeadlineSectionWidthPreferenceKey.self) { newWidth in
-            availableWidth = newWidth
         }
         .liquidGlassCard(cornerRadius: 22)
     }
 }
 
-private struct DeadlineSectionWidthPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+private struct FixedWidthGridLayout: Layout {
+    let itemWidth: CGFloat
+    let spacing: CGFloat
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let containerWidth = max(proposal.width ?? itemWidth, itemWidth)
+        let columns = columnCount(for: containerWidth)
+        let rowHeights = measuredRowHeights(for: subviews, columns: columns)
+        let totalHeight = rowHeights.reduce(0, +) + CGFloat(max(rowHeights.count - 1, 0)) * spacing
+        return CGSize(width: proposal.width ?? containerWidth, height: totalHeight)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        let columns = columnCount(for: bounds.width)
+        let rowHeights = measuredRowHeights(for: subviews, columns: columns)
+        let totalItemsWidth = CGFloat(columns) * itemWidth + CGFloat(max(columns - 1, 0)) * spacing
+        let originX = bounds.minX + max((bounds.width - totalItemsWidth) / 2, 0)
+
+        var y = bounds.minY
+        for row in 0..<rowHeights.count {
+            let rowStart = row * columns
+            let rowEnd = min(rowStart + columns, subviews.count)
+            for column in 0..<(rowEnd - rowStart) {
+                let index = rowStart + column
+                let x = originX + CGFloat(column) * (itemWidth + spacing)
+                subviews[index].place(
+                    at: CGPoint(x: x, y: y),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: itemWidth, height: rowHeights[row])
+                )
+            }
+            y += rowHeights[row] + spacing
+        }
+    }
+
+    private func columnCount(for width: CGFloat) -> Int {
+        let rawCount = Int((width + spacing) / (itemWidth + spacing))
+        return max(rawCount, 1)
+    }
+
+    private func measuredRowHeights(for subviews: Subviews, columns: Int) -> [CGFloat] {
+        stride(from: 0, to: subviews.count, by: columns).map { start in
+            let end = min(start + columns, subviews.count)
+            return subviews[start..<end]
+                .map { $0.sizeThatFits(ProposedViewSize(width: itemWidth, height: nil)).height }
+                .max() ?? 0
+        }
     }
 }
 

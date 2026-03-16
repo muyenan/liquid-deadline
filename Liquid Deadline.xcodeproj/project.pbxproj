@@ -63,19 +63,19 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		7D8900013C00000100000001 /* Exceptions for "Liquid Deadline" folder in "Liquid Deadline" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = 4B489F5F2F3F006B0055C16A /* Liquid Deadline */;
-		};
 		6C2D110A3B7A10010000000B /* Exceptions for "Liquid Deadline Widget" folder in "LiquidDeadlineWidgetExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
 			target = 6C2D110A3B7A10010000000F /* LiquidDeadlineWidgetExtension */;
+		};
+		7D8900013C00000100000001 /* Exceptions for "Liquid Deadline" folder in "Liquid Deadline" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 4B489F5F2F3F006B0055C16A /* Liquid Deadline */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
