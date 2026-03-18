@@ -1,4 +1,5 @@
 import SwiftUI
+import CloudKit
 
 struct ContentView: View {
     @EnvironmentObject private var languageManager: LanguageManager
@@ -34,6 +35,17 @@ struct ContentView: View {
             set: { newValue in
                 if newValue == false {
                     store.lastSyncErrorMessage = nil
+                }
+            }
+        )
+    }
+
+    private var cloudAccountPromptBinding: Binding<Bool> {
+        Binding(
+            get: { store.pendingCloudAccountPrompt != nil },
+            set: { newValue in
+                if newValue == false {
+                    store.pendingCloudAccountPrompt = nil
                 }
             }
         )
@@ -117,9 +129,9 @@ struct ContentView: View {
             EditDeadlineSheet(
                 item: item,
                 groups: store.groups,
-                onSaveActive: { id, title, category, detail, startDate, endDate, scope in
+                onSaveActive: { baseItem, title, category, detail, startDate, endDate, scope in
                     store.updateItem(
-                        id: id,
+                        baseItem: baseItem,
                         title: title,
                         category: category,
                         detail: detail,
@@ -128,11 +140,14 @@ struct ContentView: View {
                         scope: scope
                     )
                 },
-                onSaveClosedDetail: { id, detail in
-                    store.updateClosedItemDetail(id: id, detail: detail)
+                onSaveClosedDetail: { baseItem, detail in
+                    store.updateClosedItemDetail(baseItem: baseItem, detail: detail)
                 },
                 onComplete: { id in
                     store.completeItem(id: id)
+                },
+                onApplyLocalConflictResolution: { conflict in
+                    store.applyLocalConflictResolution(conflict)
                 },
                 onCreateNew: { draft in
                     createDraft = draft
@@ -154,16 +169,53 @@ struct ContentView: View {
         } message: {
             Text(store.lastSyncErrorMessage ?? "")
         }
+        .confirmationDialog(
+            t("Detected an iCloud account change", "检测到 iCloud 账号发生变化"),
+            isPresented: cloudAccountPromptBinding,
+            titleVisibility: .visible
+        ) {
+            Button(t("Merge Local Data and Sync", "合并本地数据并同步")) {
+                Task {
+                    await store.resolveCloudAccountPromptByMerging()
+                }
+            }
+            Button(t("Delete Local Data and Resync", "删除本地数据并重新同步"), role: .destructive) {
+                Task {
+                    await store.resolveCloudAccountPromptByReplacingLocalData()
+                }
+            }
+            Button(t("Turn Off Automatic Sync", "关闭自动同步"), role: .cancel) {
+                store.resolveCloudAccountPromptByDisablingSync()
+            }
+        } message: {
+            Text(
+                t(
+                    "A different iCloud account is now available. Choose whether to merge your local data into the current account, clear local synced data and download from iCloud again, or keep data local with automatic sync turned off.",
+                    "当前检测到可用的 iCloud 账号与之前不同。请选择将本地数据与当前账号合并、清空本地可同步数据并重新从 iCloud 拉取，或仅保留本地数据并关闭自动同步。"
+                )
+            )
+        }
         .environmentObject(motion)
         .onAppear {
             store.applyDefaultGroupLocalizationIfNeeded(language: languageManager.currentLanguage)
+            if let syncedLanguageSelection = store.syncedLanguageSelection,
+               syncedLanguageSelection != languageManager.currentLanguage {
+                languageManager.applySyncedLanguage(syncedLanguageSelection)
+            }
+            store.handleLocalLanguageSelectionChange(languageManager.currentLanguage)
             store.extendRecurringItemsIfNeeded(at: .now)
             Task {
+                await store.refreshCloudAccountStatusIfNeeded()
                 await store.refreshSubscriptionsIfNeeded(now: .now)
             }
         }
         .onChange(of: languageManager.currentLanguage) { _, newLanguage in
             store.applyDefaultGroupLocalizationIfNeeded(language: newLanguage)
+            store.handleLocalLanguageSelectionChange(newLanguage)
+        }
+        .onChange(of: store.syncedLanguageSelection) { _, newLanguage in
+            guard let newLanguage, newLanguage != languageManager.currentLanguage else { return }
+            languageManager.applySyncedLanguage(newLanguage)
         }
     }
 
@@ -609,9 +661,10 @@ private struct EditDeadlineSheet: View {
 
     let item: DeadlineItem
     let groups: [String]
-    let onSaveActive: (UUID, String, String, String, Date, Date, DeadlineRecurringChangeScope) -> Void
-    let onSaveClosedDetail: (UUID, String) -> Void
+    let onSaveActive: (DeadlineItem, String, String, String, Date, Date, DeadlineRecurringChangeScope) -> DeadlineEditSaveResult
+    let onSaveClosedDetail: (DeadlineItem, String) -> DeadlineEditSaveResult
     let onComplete: (UUID) -> Void
+    let onApplyLocalConflictResolution: (DeadlineEditConflict) -> Bool
     let onCreateNew: (NewDeadlineDraft) -> Void
     let onMarkIncomplete: (UUID) -> Void
     let onDelete: (UUID, DeadlineRecurringChangeScope) -> Void
@@ -628,6 +681,7 @@ private struct EditDeadlineSheet: View {
     @State private var showRepeatDeleteOptions = false
     @State private var pendingCreateDraft: NewDeadlineDraft?
     @State private var shouldMarkIncomplete = false
+    @State private var pendingConflict: DeadlineEditConflict?
 
     private func t(_ english: String, _ chinese: String) -> String {
         languageManager.currentLanguage.text(english, chinese)
@@ -646,7 +700,7 @@ private struct EditDeadlineSheet: View {
     }
 
     private var isSubscriptionManaged: Bool {
-        item.sourceKind == .subscribedURL
+        item.subscriptionID != nil || item.sourceKind == .subscribedURL
     }
 
     private var isRecurringTask: Bool {
@@ -825,6 +879,36 @@ private struct EditDeadlineSheet: View {
             } message: {
                 Text(t("Choose whether the changes apply only to this event or to this event and all following events in the series.", "选择本次修改仅作用于当前日程，或作用于当前及之后的所有日程。"))
             }
+            .confirmationDialog(
+                t("Detected a data conflict", "检测到数据冲突"),
+                isPresented: Binding(
+                    get: { pendingConflict != nil },
+                    set: { newValue in
+                        if newValue == false {
+                            pendingConflict = nil
+                        }
+                    }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button(t("Keep Local Data", "保留本地数据")) {
+                    if let pendingConflict, onApplyLocalConflictResolution(pendingConflict) {
+                        dismiss()
+                    }
+                }
+                Button(t("Keep Cloud Data", "保留云端数据")) {
+                    guard let pendingConflict else { return }
+                    applyCloudVersion(from: pendingConflict.currentItem)
+                    self.pendingConflict = nil
+                }
+                Button(t("Cancel", "取消"), role: .cancel) {
+                    pendingConflict = nil
+                }
+            } message: {
+                if let pendingConflict {
+                    Text(conflictDescription(for: pendingConflict))
+                }
+            }
             .onAppear {
                 title = item.title
                 detail = item.detail
@@ -855,8 +939,8 @@ private struct EditDeadlineSheet: View {
         }
 
         if isClosedTask {
-            onSaveClosedDetail(item.id, detail)
-            dismiss()
+            let result = onSaveClosedDetail(item, detail)
+            handleSaveResult(result)
             return
         }
 
@@ -877,8 +961,49 @@ private struct EditDeadlineSheet: View {
     }
 
     private func performSave(scope: DeadlineRecurringChangeScope) {
-        onSaveActive(item.id, title, selectedGroup, detail, startDate, endDate, scope)
-        dismiss()
+        let result = onSaveActive(item, title, selectedGroup, detail, startDate, endDate, scope)
+        handleSaveResult(result)
+    }
+
+    private func handleSaveResult(_ result: DeadlineEditSaveResult) {
+        switch result {
+        case .saved:
+            dismiss()
+        case .conflict(let conflict):
+            pendingConflict = conflict
+        }
+    }
+
+    private func applyCloudVersion(from item: DeadlineItem) {
+        title = item.title
+        selectedGroup = groups.contains(item.category) ? item.category : (groups.first ?? DeadlineStore.fallbackGroupName)
+        detail = item.detail
+        startDate = item.startDate
+        endDate = item.endDate
+    }
+
+    private func conflictDescription(for conflict: DeadlineEditConflict) -> String {
+        let labels = conflict.fields.map(conflictFieldTitle(_:))
+        let joinedFields = ListFormatter.localizedString(byJoining: labels)
+        return t(
+            "The field(s) \(joinedFields) were changed on another device while you were editing. Choose whether to keep your local changes or use the latest iCloud values.",
+            "你编辑期间，字段 \(joinedFields) 已在其他设备上被修改。请选择保留本地修改，或使用最新的云端数据。"
+        )
+    }
+
+    private func conflictFieldTitle(_ field: DeadlineEditConflictField) -> String {
+        switch field {
+        case .title:
+            return t("Title", "标题")
+        case .category:
+            return t("Category", "分类")
+        case .detail:
+            return t("Description", "描述")
+        case .startDate:
+            return t("Start Time", "起始时间")
+        case .endDate:
+            return t("End Time", "结束时间")
+        }
     }
 }
 
@@ -928,6 +1053,21 @@ private struct SettingsView: View {
                     }
                 } header: {
                     Text(t("Background", "背景"))
+                }
+
+                Section {
+                    NavigationLink {
+                        SyncSettingsView(store: store)
+                    } label: {
+                        HStack {
+                            Label(t("Sync Options", "同步选项"), systemImage: "arrow.triangle.2.circlepath")
+                            Spacer()
+                            Text(store.syncOptions.automaticSyncEnabled ? t("On", "已开启") : t("Off", "已关闭"))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text(t("Sync", "同步"))
                 }
 
                 Section {
@@ -1095,6 +1235,93 @@ private struct SettingsView: View {
     }
 }
 
+private struct SyncSettingsView: View {
+    @EnvironmentObject private var languageManager: LanguageManager
+    @ObservedObject var store: DeadlineStore
+
+    private func t(_ english: String, _ chinese: String) -> String {
+        languageManager.currentLanguage.text(english, chinese)
+    }
+
+    private var automaticSyncBinding: Binding<Bool> {
+        Binding(
+            get: { store.syncOptions.automaticSyncEnabled },
+            set: { store.setAutomaticSyncEnabled($0) }
+        )
+    }
+
+    private var languageSyncBinding: Binding<Bool> {
+        Binding(
+            get: { store.syncOptions.syncLanguage },
+            set: { store.setLanguageSyncEnabled($0) }
+        )
+    }
+
+    private var backgroundSyncBinding: Binding<Bool> {
+        Binding(
+            get: { store.syncOptions.syncBackgroundStyle },
+            set: { store.setBackgroundSyncEnabled($0) }
+        )
+    }
+
+    private var groupSyncBinding: Binding<Bool> {
+        Binding(
+            get: { store.syncOptions.syncGroups },
+            set: { store.setGroupsSyncEnabled($0) }
+        )
+    }
+
+    private var taskSyncBinding: Binding<Bool> {
+        Binding(
+            get: { store.syncOptions.syncTasks },
+            set: { store.setTasksSyncEnabled($0) }
+        )
+    }
+
+    private var subscriptionSyncBinding: Binding<Bool> {
+        Binding(
+            get: { store.syncOptions.syncSubscriptions },
+            set: { store.setSubscriptionsSyncEnabled($0) }
+        )
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle(t("Automatic Sync", "自动同步"), isOn: automaticSyncBinding)
+            } footer: {
+                Text(
+                    t(
+                        "Turn this on to sync data through iCloud on your Apple devices signed in to the same account.",
+                        "打开后，将通过 iCloud 在登录同一账号的 Apple 设备之间同步数据。"
+                    )
+                )
+            }
+
+            if store.syncOptions.automaticSyncEnabled {
+                Section {
+                    Toggle(t("Language", "语言"), isOn: languageSyncBinding)
+                    Toggle(t("Background Style", "背景样式"), isOn: backgroundSyncBinding)
+                    Toggle(t("Group List", "标签列表"), isOn: groupSyncBinding)
+                    Toggle(t("Tasks", "事项"), isOn: taskSyncBinding)
+                    Toggle(t("Subscriptions", "订阅"), isOn: subscriptionSyncBinding)
+                } header: {
+                    Text(t("Sync Content", "同步内容"))
+                } footer: {
+                    Text(
+                        t(
+                            "Turning off group sync also turns off task and subscription sync.",
+                            "关闭标签列表同步时，事项同步和订阅同步也会一并关闭。"
+                        )
+                    )
+                }
+            }
+        }
+        .navigationTitle(t("Sync Options", "同步选项"))
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
 private struct SubscriptionRow: View {
     let subscription: DeadlineSubscription
     let language: AppLanguage
@@ -1236,3 +1463,4 @@ private struct GroupTagRow: View {
         .contentShape(Rectangle())
     }
 }
+

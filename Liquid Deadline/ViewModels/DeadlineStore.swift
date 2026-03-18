@@ -1,5 +1,44 @@
 import Foundation
 import Combine
+import CloudKit
+
+enum DeadlineSyncDomainSource: Hashable {
+    case localDefaults
+    case localPersistentStore
+    case cloudPersistentStore
+}
+
+struct DeadlineSyncDiagnostics: Hashable {
+    let refreshedAt: Date
+    let automaticSyncEnabled: Bool
+    let isCloudStoreEnabled: Bool
+    let persistenceLoadIssueDescription: String?
+    let lastSyncErrorMessage: String?
+    let cloudContainerIdentifier: String?
+    let storedAccountFingerprint: String?
+    let currentAccountStatus: CKAccountStatus
+    let currentAccountFingerprint: String?
+    let taskSource: DeadlineSyncDomainSource
+    let groupSource: DeadlineSyncDomainSource
+    let subscriptionSource: DeadlineSyncDomainSource
+    let languageSource: DeadlineSyncDomainSource
+    let backgroundSource: DeadlineSyncDomainSource
+    let currentItemCount: Int
+    let currentGroupCount: Int
+    let currentSubscriptionCount: Int
+    let storeStandaloneItemCount: Int
+    let storeLegacyRecurringItemCount: Int
+    let storeRecurringSeriesCount: Int
+    let storeRecurringOverrideCount: Int
+    let storeGroupCount: Int
+    let storeSubscriptionCount: Int
+    let localStandaloneItemCount: Int
+    let localLegacyRecurringItemCount: Int
+    let localRecurringSeriesCount: Int
+    let localRecurringOverrideCount: Int
+    let localGroupCount: Int
+    let localSubscriptionCount: Int
+}
 
 @MainActor
 final class DeadlineStore: ObservableObject {
@@ -22,10 +61,18 @@ final class DeadlineStore: ObservableObject {
     ]
 
     @Published var items: [DeadlineItem] = [] {
-        didSet { saveItems() }
+        didSet {
+            if isHydratingPersistence == false {
+                saveItems()
+            }
+        }
     }
     @Published var subscriptions: [DeadlineSubscription] = [] {
-        didSet { saveSubscriptions() }
+        didSet {
+            if isHydratingPersistence == false {
+                saveSubscriptions()
+            }
+        }
     }
     @Published var viewStyle: DeadlineViewStyle = .progressBar {
         didSet {
@@ -63,15 +110,36 @@ final class DeadlineStore: ObservableObject {
             }
         }
     }
+    @Published var syncOptions: DeadlineSyncOptions = .default {
+        didSet {
+            if oldValue != syncOptions {
+                saveSyncOptions()
+            }
+        }
+    }
     @Published var isRefreshingSubscriptions = false
+    @Published var isRefreshingSyncDiagnostics = false
     @Published var lastSyncErrorMessage: String?
+    @Published var pendingCloudAccountPrompt: DeadlineCloudAccountPrompt?
+    @Published private(set) var syncedLanguageSelection: AppLanguage?
+    @Published private(set) var cloudProbeSnapshot: DeadlineCloudProbeSnapshot?
+    @Published private(set) var cloudWriteProbeSnapshot: DeadlineCloudWriteProbeSnapshot?
+    @Published private(set) var recentCloudEvents: [DeadlineCloudEventSnapshot] = []
+    @Published private(set) var syncDiagnostics: DeadlineSyncDiagnostics?
     @Published private(set) var lastSubscriptionRefreshAt: Date? {
         didSet { saveLastSubscriptionRefreshAt() }
     }
+    @Published var isRunningCloudWriteProbe = false
+    @Published var isRebuildingSyncStore = false
 
     private let defaults = DeadlineStorage.sharedDefaults
+    private let languageSelectionStorageKey = DeadlineStorage.languageSelectionKey
     private let itemsStorageKey = DeadlineStorage.itemsStorageKey
+    private let compactStateStorageKey = DeadlineStorage.compactStateStorageKey
     private let subscriptionsStorageKey = DeadlineStorage.subscriptionsStorageKey
+    private let subscriptionLocalStateStorageKey = DeadlineStorage.subscriptionLocalStateStorageKey
+    private let syncOptionsStorageKey = DeadlineStorage.syncOptionsStorageKey
+    private let cloudAccountFingerprintStorageKey = DeadlineStorage.cloudAccountFingerprintStorageKey
     private let lastSubscriptionRefreshStorageKey = DeadlineStorage.lastSubscriptionRefreshStorageKey
     private let viewStyleStorageKey = DeadlineStorage.viewStyleStorageKey
     private let sortOptionStorageKey = DeadlineStorage.sortOptionStorageKey
@@ -79,18 +147,32 @@ final class DeadlineStore: ObservableObject {
     private let groupsStorageKey = DeadlineStorage.groupsStorageKey
     private let backgroundStyleStorageKey = DeadlineStorage.backgroundStyleStorageKey
     private let liquidMotionEnabledStorageKey = DeadlineStorage.liquidMotionEnabledStorageKey
+    private var persistence: DeadlinePersistenceController?
+    private var persistedState = DeadlinePersistedState()
+    private var isHydratingPersistence = false
+    private var persistenceRemoteChangeCancellable: AnyCancellable?
 
     init() {
         DeadlineStorage.migrateStandardDefaultsIfNeeded()
+        loadSyncOptions()
+        persistence = DeadlinePersistenceController(syncEnabled: syncOptions.automaticSyncEnabled)
+        persistence?.bootstrapIfNeeded(fallbackGroups: Self.defaultGroups(for: .english))
+        observePersistenceRemoteChanges()
         loadViewStyle()
         loadSortOption()
-        loadGroups()
         loadSelectedFilterGroup()
         loadBackgroundStyle()
         loadLiquidMotionEnabled()
-        loadSubscriptions()
         loadLastSubscriptionRefreshAt()
-        loadItems()
+        loadSyncedSnapshot(now: .now)
+        if syncOptions.syncBackgroundStyle,
+           let syncedBackgroundStyle = persistence?.loadSnapshot().syncPreferences.backgroundStyle {
+            backgroundStyle = syncedBackgroundStyle
+        }
+        if let issue = persistence?.loadIssueDescription,
+           syncOptions.automaticSyncEnabled {
+            lastSyncErrorMessage = issue
+        }
         extendRecurringItemsIfNeeded(at: .now)
         validateSelectedFilterGroup()
     }
@@ -109,19 +191,29 @@ final class DeadlineStore: ObservableObject {
         guard trimmedTitle.isEmpty == false, endDate > startDate else { return }
 
         if let repeatRule {
-            items.append(contentsOf: makeRecurringItems(
-                title: trimmedTitle,
-                category: normalizedCategory,
-                detail: trimmedDetail,
-                startDate: startDate,
-                endDate: endDate,
-                repeatRule: repeatRule,
-                sourceKind: .manual
-            ))
+            var state = persistedState
+            state.recurringSeries.append(
+                DeadlineRecurringSeries(
+                    seriesID: UUID(),
+                    seedItemID: UUID(),
+                    title: trimmedTitle,
+                    category: normalizedCategory,
+                    detail: trimmedDetail,
+                    startDate: startDate,
+                    endDate: endDate,
+                    createdAt: .now,
+                    sourceKind: .manual,
+                    originalStartDateWasMissing: false,
+                    isAllDay: false,
+                    repeatRule: repeatRule
+                )
+            )
+            applyPersistedState(state, now: startDate)
             return
         }
 
-        items.append(
+        var state = persistedState
+        state.standaloneItems.append(
             DeadlineItem(
                 title: trimmedTitle,
                 category: normalizedCategory,
@@ -130,6 +222,7 @@ final class DeadlineStore: ObservableObject {
                 endDate: endDate
             )
         )
+        applyPersistedState(state, now: endDate)
     }
 
     func importICSFile(data: Data, category: String, importedAt: Date = .now) throws {
@@ -233,13 +326,21 @@ final class DeadlineStore: ObservableObject {
     }
 
     func extendRecurringItemsIfNeeded(at now: Date = .now) {
-        guard items.isEmpty == false else { return }
+        guard persistedState.standaloneItems.isEmpty == false ||
+                persistedState.legacyRecurringItems.isEmpty == false ||
+                persistedState.recurringSeries.isEmpty == false else {
+            return
+        }
 
         let horizonEnd = Calendar.current.date(byAdding: .day, value: Self.recurrenceHorizonDays, to: now) ?? now
-        var updatedItems = items
-        let seedItems = updatedItems.filter(\.isRepeatSeed)
+        let compactSeriesIDs = Set(persistedState.recurringSeries.map(\.seriesID))
+        var updatedItems = materializedItems(from: persistedState, now: now)
+        let legacySeedItems = updatedItems.filter { item in
+            item.isRepeatSeed &&
+            (item.repeatSeriesID.map { compactSeriesIDs.contains($0) } ?? false) == false
+        }
 
-        for seed in seedItems {
+        for seed in legacySeedItems {
             extendRecurringSeries(for: seed, through: horizonEnd, items: &updatedItems)
         }
 
@@ -249,7 +350,7 @@ final class DeadlineStore: ObservableObject {
     }
 
     func updateItem(id: UUID, title: String, category: String, detail: String, startDate: Date, endDate: Date) {
-        updateItem(
+        applyUpdateItem(
             id: id,
             title: title,
             category: category,
@@ -261,6 +362,58 @@ final class DeadlineStore: ObservableObject {
     }
 
     func updateItem(
+        baseItem: DeadlineItem,
+        title: String,
+        category: String,
+        detail: String,
+        startDate: Date,
+        endDate: Date,
+        scope: DeadlineRecurringChangeScope
+    ) -> DeadlineEditSaveResult {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedCategory = normalizedCategoryName(from: category)
+        let trimmedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedTitle.isEmpty == false, endDate > startDate else { return .saved }
+        guard let currentItem = items.first(where: { $0.id == baseItem.id }) else { return .saved }
+
+        let conflictFields = conflictingFields(
+            baseItem: baseItem,
+            currentItem: currentItem,
+            proposedTitle: trimmedTitle,
+            proposedCategory: normalizedCategory,
+            proposedDetail: trimmedDetail,
+            proposedStartDate: startDate,
+            proposedEndDate: endDate
+        )
+
+        if conflictFields.isEmpty == false {
+            return .conflict(
+                DeadlineEditConflict(
+                    currentItem: currentItem,
+                    proposedTitle: trimmedTitle,
+                    proposedCategory: normalizedCategory,
+                    proposedDetail: trimmedDetail,
+                    proposedStartDate: startDate,
+                    proposedEndDate: endDate,
+                    scope: scope,
+                    fields: conflictFields
+                )
+            )
+        }
+
+        applyUpdateItem(
+            id: baseItem.id,
+            title: trimmedTitle,
+            category: normalizedCategory,
+            detail: trimmedDetail,
+            startDate: startDate,
+            endDate: endDate,
+            scope: scope
+        )
+        return .saved
+    }
+
+    private func applyUpdateItem(
         id: UUID,
         title: String,
         category: String,
@@ -274,6 +427,30 @@ final class DeadlineStore: ObservableObject {
         let trimmedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmedTitle.isEmpty == false, endDate > startDate else { return }
         guard let item = items.first(where: { $0.id == id }) else { return }
+
+        if scope == .thisEvent,
+           applyRecurringOccurrenceEditIfPossible(
+            item: item,
+            title: trimmedTitle,
+            category: normalizedCategory,
+            detail: trimmedDetail,
+            startDate: startDate,
+            endDate: endDate
+           ) {
+            return
+        }
+
+        if scope == .futureEvents,
+           applyRecurringFutureEditIfPossible(
+            item: item,
+            title: trimmedTitle,
+            category: normalizedCategory,
+            detail: trimmedDetail,
+            startDate: startDate,
+            endDate: endDate
+           ) {
+            return
+        }
 
         guard
             item.belongsToRepeatSeries,
@@ -317,15 +494,82 @@ final class DeadlineStore: ObservableObject {
         items = updatedItems
     }
 
-    func updateClosedItemDetail(id: UUID, detail: String) {
+    func updateClosedItemDetail(baseItem: DeadlineItem, detail: String) -> DeadlineEditSaveResult {
         let trimmedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let currentItem = items.first(where: { $0.id == baseItem.id }) else { return .saved }
+
+        let conflictFields = conflictingFields(
+            baseItem: baseItem,
+            currentItem: currentItem,
+            proposedTitle: currentItem.title,
+            proposedCategory: currentItem.category,
+            proposedDetail: trimmedDetail,
+            proposedStartDate: currentItem.startDate,
+            proposedEndDate: currentItem.endDate
+        )
+
+        if conflictFields.isEmpty == false {
+            return .conflict(
+                DeadlineEditConflict(
+                    currentItem: currentItem,
+                    proposedTitle: currentItem.title,
+                    proposedCategory: currentItem.category,
+                    proposedDetail: trimmedDetail,
+                    proposedStartDate: currentItem.startDate,
+                    proposedEndDate: currentItem.endDate,
+                    scope: .thisEvent,
+                    fields: conflictFields
+                )
+            )
+        }
+
+        applyClosedItemDetail(id: baseItem.id, detail: trimmedDetail)
+        return .saved
+    }
+
+    private func applyClosedItemDetail(id: UUID, detail: String) {
+        let trimmedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let item = items.first(where: { $0.id == id }) else { return }
+
+        if applyRecurringOccurrenceEditIfPossible(
+            item: item,
+            title: item.title,
+            category: item.category,
+            detail: trimmedDetail,
+            startDate: item.startDate,
+            endDate: item.endDate
+        ) {
+            return
+        }
+
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].detail = trimmedDetail
+    }
+
+    func applyLocalConflictResolution(_ conflict: DeadlineEditConflict) -> Bool {
+        applyUpdateItem(
+            id: conflict.currentItem.id,
+            title: conflict.proposedTitle,
+            category: conflict.proposedCategory,
+            detail: conflict.proposedDetail,
+            startDate: conflict.proposedStartDate,
+            endDate: conflict.proposedEndDate,
+            scope: conflict.scope
+        )
+        return true
     }
 
     func completeItem(id: UUID, at completedAt: Date = .now) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         guard items[index].canComplete(at: completedAt) else { return }
+
+        if applyRecurringCompletionIfPossible(
+            item: items[index],
+            completedAt: completedAt
+        ) {
+            return
+        }
+
         items[index].completedAt = completedAt
         if items[index].belongsToRepeatSeries {
             extendRecurringItemsIfNeeded(at: completedAt)
@@ -335,6 +579,11 @@ final class DeadlineStore: ObservableObject {
     @discardableResult
     func markItemIncomplete(id: UUID, at now: Date = .now) -> DeadlineSection? {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return nil }
+
+        if let section = applyRecurringIncompleteIfPossible(item: items[index], now: now) {
+            return section
+        }
+
         items[index].completedAt = nil
         return items[index].section(at: now)
     }
@@ -345,6 +594,10 @@ final class DeadlineStore: ObservableObject {
 
     func removeItem(id: UUID, scope: DeadlineRecurringChangeScope) {
         guard let item = items.first(where: { $0.id == id }) else { return }
+
+        if applyRecurringRemovalIfPossible(item: item, scope: scope) {
+            return
+        }
 
         guard item.belongsToRepeatSeries, let repeatContext = recurringContext(for: item) else {
             items.removeAll { $0.id == id }
@@ -449,6 +702,162 @@ final class DeadlineStore: ObservableObject {
 
     func setViewStyle(_ style: DeadlineViewStyle) {
         viewStyle = style
+    }
+
+    func setAutomaticSyncEnabled(_ isEnabled: Bool) {
+        var updated = syncOptions
+        updated.setAutomaticSyncEnabled(isEnabled)
+        syncOptions = updated
+        reconfigurePersistence(syncEnabled: isEnabled)
+        persistEnabledSyncDomains()
+    }
+
+    func setLanguageSyncEnabled(_ isEnabled: Bool) {
+        var updated = syncOptions
+        updated.setSyncLanguage(isEnabled)
+        syncOptions = updated
+        if isEnabled {
+            saveSyncPreferencesIfNeeded()
+        } else {
+            syncedLanguageSelection = nil
+        }
+    }
+
+    func setBackgroundSyncEnabled(_ isEnabled: Bool) {
+        var updated = syncOptions
+        updated.setSyncBackgroundStyle(isEnabled)
+        syncOptions = updated
+        if isEnabled {
+            saveSyncPreferencesIfNeeded()
+        }
+    }
+
+    func setGroupsSyncEnabled(_ isEnabled: Bool) {
+        var updated = syncOptions
+        updated.setSyncGroups(isEnabled)
+        syncOptions = updated
+        if updated.syncGroups {
+            saveGroups()
+        }
+    }
+
+    func setTasksSyncEnabled(_ isEnabled: Bool) {
+        var updated = syncOptions
+        updated.setSyncTasks(isEnabled)
+        syncOptions = updated
+        if updated.syncTasks {
+            saveItems()
+        }
+    }
+
+    func setSubscriptionsSyncEnabled(_ isEnabled: Bool) {
+        var updated = syncOptions
+        updated.setSyncSubscriptions(isEnabled)
+        syncOptions = updated
+        if updated.syncSubscriptions {
+            saveSubscriptions()
+        }
+    }
+
+    func handleLocalLanguageSelectionChange(_ language: AppLanguage) {
+        guard syncOptions.syncLanguage else { return }
+        saveSyncPreferencesIfNeeded(currentLanguage: language)
+    }
+
+    func refreshSyncDiagnostics() async {
+        isRefreshingSyncDiagnostics = true
+
+        async let accountSnapshotTask = DeadlineCloudSyncMonitor.fetchCurrentAccountSnapshot()
+        async let cloudProbeTask = DeadlineCloudRecordProbe.fetchPrivateDatabaseSnapshot(
+            containerIdentifier: DeadlineStorage.cloudKitContainerIdentifier
+        )
+
+        let accountSnapshot = await accountSnapshotTask
+        let storeSnapshot = persistence?.loadSnapshot() ?? DeadlinePersistenceSnapshot(
+            state: DeadlinePersistedState(),
+            groups: [],
+            subscriptions: [],
+            syncPreferences: DeadlineSyncPreferenceSnapshot()
+        )
+        let fallbackGroups = Self.defaultGroups(for: currentStoredLanguageSelection() ?? .english)
+        let localState = localPersistedStateFromDefaults()
+        let localGroups = localGroupsFromDefaults(fallbackGroups: fallbackGroups)
+        let localSubscriptions = loadLocalSubscriptionsFromDefaults()
+        cloudProbeSnapshot = await cloudProbeTask
+        recentCloudEvents = persistence?.fetchRecentCloudKitEvents() ?? []
+
+        syncDiagnostics = DeadlineSyncDiagnostics(
+            refreshedAt: .now,
+            automaticSyncEnabled: syncOptions.automaticSyncEnabled,
+            isCloudStoreEnabled: persistence?.isCloudSyncEnabled ?? false,
+            persistenceLoadIssueDescription: persistence?.loadIssueDescription,
+            lastSyncErrorMessage: lastSyncErrorMessage,
+            cloudContainerIdentifier: DeadlineStorage.cloudKitContainerIdentifier,
+            storedAccountFingerprint: defaults.string(forKey: cloudAccountFingerprintStorageKey),
+            currentAccountStatus: accountSnapshot.status,
+            currentAccountFingerprint: accountSnapshot.fingerprint,
+            taskSource: syncDomainSource(isEnabled: syncOptions.syncTasks),
+            groupSource: syncDomainSource(isEnabled: syncOptions.syncGroups),
+            subscriptionSource: syncDomainSource(isEnabled: syncOptions.syncSubscriptions),
+            languageSource: syncDomainSource(isEnabled: syncOptions.syncLanguage),
+            backgroundSource: syncDomainSource(isEnabled: syncOptions.syncBackgroundStyle),
+            currentItemCount: items.count,
+            currentGroupCount: groups.count,
+            currentSubscriptionCount: subscriptions.count,
+            storeStandaloneItemCount: storeSnapshot.state.standaloneItems.count,
+            storeLegacyRecurringItemCount: storeSnapshot.state.legacyRecurringItems.count,
+            storeRecurringSeriesCount: storeSnapshot.state.recurringSeries.count,
+            storeRecurringOverrideCount: storeSnapshot.state.recurringOverrides.count,
+            storeGroupCount: storeSnapshot.groups.count,
+            storeSubscriptionCount: storeSnapshot.subscriptions.count,
+            localStandaloneItemCount: localState.standaloneItems.count,
+            localLegacyRecurringItemCount: localState.legacyRecurringItems.count,
+            localRecurringSeriesCount: localState.recurringSeries.count,
+            localRecurringOverrideCount: localState.recurringOverrides.count,
+            localGroupCount: localGroups.count,
+            localSubscriptionCount: localSubscriptions.count
+        )
+
+        isRefreshingSyncDiagnostics = false
+    }
+
+    func runCloudWriteProbe() async {
+        isRunningCloudWriteProbe = true
+        cloudWriteProbeSnapshot = await DeadlineCloudRecordProbe.runPrivateDatabaseWriteProbe(
+            containerIdentifier: DeadlineStorage.cloudKitContainerIdentifier
+        )
+        isRunningCloudWriteProbe = false
+    }
+
+    func rebuildSyncStoreFromLocalSnapshot() {
+        isRebuildingSyncStore = true
+        persistenceRemoteChangeCancellable = nil
+        persistence = nil
+        DeadlinePersistenceController.destroyPersistentStoreFiles()
+        persistence = DeadlinePersistenceController(syncEnabled: syncOptions.automaticSyncEnabled)
+        persistence?.bootstrapIfNeeded(fallbackGroups: Self.defaultGroups(for: currentStoredLanguageSelection() ?? .english))
+        observePersistenceRemoteChanges()
+
+        if syncOptions.syncTasks {
+            persistence?.savePersistedState(localPersistedStateFromDefaults())
+        }
+        if syncOptions.syncGroups {
+            persistence?.saveGroups(localGroupsFromDefaults(fallbackGroups: Self.defaultGroups(for: currentStoredLanguageSelection() ?? .english)))
+        }
+        if syncOptions.syncSubscriptions {
+            persistence?.saveSubscriptions(loadLocalSubscriptionsFromDefaults())
+        }
+        if syncOptions.syncLanguage || syncOptions.syncBackgroundStyle {
+            saveSyncPreferencesIfNeeded()
+        }
+
+        loadSyncedSnapshot(now: .now)
+        lastSyncErrorMessage = nil
+        if let issue = persistence?.loadIssueDescription,
+           syncOptions.automaticSyncEnabled {
+            lastSyncErrorMessage = issue
+        }
+        isRebuildingSyncStore = false
     }
 
     func addGroup(name: String) {
@@ -636,7 +1045,7 @@ final class DeadlineStore: ObservableObject {
         importedAt: Date,
         into currentItems: [DeadlineItem]
     ) -> [DeadlineItem] {
-        var updatedItems = currentItems
+        var updatedItems = DeadlineLegacyMigration.normalizeDecodedItems(currentItems)
         let existingIndexes: [String: Int] = updatedItems.enumerated().reduce(into: [:]) { partialResult, entry in
             let index = entry.offset
             let item = entry.element
@@ -691,7 +1100,7 @@ final class DeadlineStore: ObservableObject {
             return seenIdentifiers.contains(externalEventIdentifier) == false
         }
 
-        return updatedItems
+        return DeadlineLegacyMigration.normalizeDecodedItems(updatedItems)
     }
 
     private func makeImportedItem(
@@ -835,30 +1244,663 @@ final class DeadlineStore: ObservableObject {
     }
 
     private func loadItems() {
-        guard
-            let data = defaults.data(forKey: itemsStorageKey),
-            let decoded = try? JSONDecoder().decode([DeadlineItem].self, from: data)
-        else { return }
-        items = decoded
+        loadSyncedSnapshot(now: .now)
     }
 
     private func saveItems() {
-        guard let data = try? JSONEncoder().encode(items) else { return }
+        let normalizedItems = DeadlineLegacyMigration.normalizeDecodedItems(items)
+        let migration = DeadlineLegacyMigration.migrateLegacyItems(normalizedItems)
+        persistedState = migration.state
+
+        if syncOptions.syncTasks {
+            persistence?.savePersistedState(migration.state)
+        }
+
+        if let compactData = try? JSONEncoder().encode(migration.state) {
+            defaults.set(compactData, forKey: compactStateStorageKey)
+        }
+
+        guard let data = try? JSONEncoder().encode(normalizedItems) else { return }
         defaults.set(data, forKey: itemsStorageKey)
         DeadlineStorage.reloadWidgets()
     }
 
-    private func loadSubscriptions() {
+    private func materializedItems(from state: DeadlinePersistedState, now: Date) -> [DeadlineItem] {
+        var result = state.standaloneItems
+        result.append(contentsOf: state.legacyRecurringItems)
+
+        let calendar = Calendar.current
+
+        for series in state.recurringSeries {
+            let occurrenceOverrides = state.recurringOverrides.reduce(into: [Int: DeadlineRecurringOverride]()) { partialResult, candidate in
+                guard candidate.seriesID == series.seriesID else { return }
+                partialResult[candidate.occurrenceIndex] = candidate
+            }
+
+            let futureHorizon = calendar.date(byAdding: .day, value: Self.recurrenceHorizonDays, to: now) ?? now
+            let seedHorizon = calendar.date(byAdding: .day, value: Self.recurrenceHorizonDays, to: series.startDate) ?? series.endDate
+            let seriesHorizon = max(futureHorizon, seedHorizon)
+
+            var occurrenceIndex = 0
+            var nextStartDate = series.startDate
+
+            while occurrenceIndex < 1024 {
+                let baseEndDate = nextStartDate.addingTimeInterval(series.endDate.timeIntervalSince(series.startDate))
+
+                if occurrenceIndex > 0 {
+                    if nextStartDate > seriesHorizon {
+                        break
+                    }
+                    if let repeatEndDate = series.repeatRule.endDate, nextStartDate > repeatEndDate {
+                        break
+                    }
+                }
+
+                let override = occurrenceOverrides[occurrenceIndex]
+                if override?.isDeleted != true {
+                    result.append(
+                        materializedRecurringItem(
+                            for: series,
+                            occurrenceIndex: occurrenceIndex,
+                            baseStartDate: nextStartDate,
+                            baseEndDate: baseEndDate,
+                            occurrenceOverride: override
+                        )
+                    )
+                }
+
+                occurrenceIndex += 1
+                guard let candidateStartDate = series.repeatRule.nextDate(after: nextStartDate) else { break }
+                nextStartDate = candidateStartDate
+            }
+        }
+
+        return DeadlineLegacyMigration.normalizeDecodedItems(result)
+    }
+
+    private func materializedRecurringItem(
+        for series: DeadlineRecurringSeries,
+        occurrenceIndex: Int,
+        baseStartDate: Date,
+        baseEndDate: Date,
+        occurrenceOverride: DeadlineRecurringOverride?
+    ) -> DeadlineItem {
+        DeadlineItem(
+            id: resolvedRecurringItemID(
+                for: series,
+                occurrenceIndex: occurrenceIndex,
+                occurrenceOverride: occurrenceOverride
+            ),
+            title: occurrenceOverride?.title ?? series.title,
+            category: occurrenceOverride?.category ?? series.category,
+            detail: occurrenceOverride?.detail ?? series.detail,
+            startDate: occurrenceOverride?.startDate ?? baseStartDate,
+            endDate: occurrenceOverride?.endDate ?? baseEndDate,
+            completedAt: occurrenceOverride?.completedAt,
+            createdAt: series.createdAt,
+            sourceKind: series.sourceKind,
+            subscriptionID: series.subscriptionID,
+            externalEventIdentifier: series.externalEventIdentifier,
+            originalStartDateWasMissing: series.originalStartDateWasMissing,
+            isAllDay: occurrenceOverride?.isAllDay ?? series.isAllDay,
+            repeatSeriesID: series.seriesID,
+            repeatOccurrenceIndex: occurrenceIndex,
+            repeatRule: occurrenceIndex == 0 ? series.repeatRule : nil
+        )
+    }
+
+    private func resolvedRecurringItemID(
+        for series: DeadlineRecurringSeries,
+        occurrenceIndex: Int,
+        occurrenceOverride: DeadlineRecurringOverride?
+    ) -> UUID {
+        if let itemID = occurrenceOverride?.itemID {
+            return itemID
+        }
+        if occurrenceIndex == 0 {
+            return series.seedItemID
+        }
+        return DeadlineRecurringIdentity.itemID(seriesID: series.seriesID, occurrenceIndex: occurrenceIndex)
+    }
+
+    private func applyPersistedState(_ state: DeadlinePersistedState, now: Date = .now) {
+        persistedState = state
+        items = materializedItems(from: state, now: now)
+    }
+
+    private func applyRecurringOccurrenceEditIfPossible(
+        item: DeadlineItem,
+        title: String,
+        category: String,
+        detail: String,
+        startDate: Date,
+        endDate: Date
+    ) -> Bool {
         guard
-            let data = defaults.data(forKey: subscriptionsStorageKey),
-            let decoded = try? JSONDecoder().decode([DeadlineSubscription].self, from: data)
-        else { return }
-        subscriptions = decoded
+            let seriesID = item.repeatSeriesID,
+            let seriesIndex = persistedState.recurringSeries.firstIndex(where: { $0.seriesID == seriesID })
+        else {
+            return false
+        }
+
+        var state = persistedState
+        let series = state.recurringSeries[seriesIndex]
+        let baseDates = recurringBaseDates(for: series, occurrenceIndex: item.repeatOccurrenceIndex)
+
+        var override = recurringOverride(
+            in: state,
+            seriesID: seriesID,
+            occurrenceIndex: item.repeatOccurrenceIndex
+        ) ?? DeadlineRecurringOverride(
+            seriesID: seriesID,
+            occurrenceIndex: item.repeatOccurrenceIndex
+        )
+
+        override.title = title == series.title ? nil : title
+        override.category = category == series.category ? nil : category
+        override.detail = detail == series.detail ? nil : detail
+        override.startDate = startDate == baseDates.startDate ? nil : startDate
+        override.endDate = endDate == baseDates.endDate ? nil : endDate
+        override.completedAt = item.completedAt
+        override.isAllDay = item.isAllDay == series.isAllDay ? nil : item.isAllDay
+        override.isDeleted = false
+
+        if override.isEmpty {
+            removeRecurringOverride(
+                from: &state,
+                seriesID: seriesID,
+                occurrenceIndex: item.repeatOccurrenceIndex
+            )
+        } else {
+            override.itemID = recurringItemIDOverride(for: item)
+            upsertRecurringOverride(&state, override: override)
+        }
+
+        applyPersistedState(state)
+        return true
+    }
+
+    private func applyRecurringFutureEditIfPossible(
+        item: DeadlineItem,
+        title: String,
+        category: String,
+        detail: String,
+        startDate: Date,
+        endDate: Date
+    ) -> Bool {
+        guard
+            let seriesID = item.repeatSeriesID,
+            let seriesIndex = persistedState.recurringSeries.firstIndex(where: { $0.seriesID == seriesID })
+        else {
+            return false
+        }
+
+        let originalState = persistedState
+        var state = persistedState
+        let originalSeries = state.recurringSeries[seriesIndex]
+
+        if item.repeatOccurrenceIndex == 0 {
+            state.recurringSeries[seriesIndex].title = title
+            state.recurringSeries[seriesIndex].category = category
+            state.recurringSeries[seriesIndex].detail = detail
+            state.recurringSeries[seriesIndex].startDate = startDate
+            state.recurringSeries[seriesIndex].endDate = endDate
+
+            if var seedOverride = recurringOverride(in: state, seriesID: seriesID, occurrenceIndex: 0) {
+                seedOverride.itemID = recurringItemIDOverride(for: item)
+                seedOverride.title = nil
+                seedOverride.category = nil
+                seedOverride.detail = nil
+                seedOverride.startDate = nil
+                seedOverride.endDate = nil
+                seedOverride.isDeleted = false
+
+                if seedOverride.isEmpty {
+                    removeRecurringOverride(from: &state, seriesID: seriesID, occurrenceIndex: 0)
+                } else {
+                    upsertRecurringOverride(&state, override: seedOverride)
+                }
+            }
+
+            applyPersistedState(state, now: startDate)
+            return true
+        }
+
+        guard
+            let previousStartDate = recurringStartDate(
+                for: originalSeries,
+                occurrenceIndex: item.repeatOccurrenceIndex - 1,
+                in: originalState
+            )
+        else {
+            return false
+        }
+
+        let newSeries = DeadlineRecurringSeries(
+            seriesID: UUID(),
+            seedItemID: item.id,
+            title: title,
+            category: category,
+            detail: detail,
+            startDate: startDate,
+            endDate: endDate,
+            createdAt: item.createdAt,
+            sourceKind: originalSeries.sourceKind,
+            subscriptionID: originalSeries.subscriptionID,
+            externalEventIdentifier: originalSeries.externalEventIdentifier,
+            originalStartDateWasMissing: originalSeries.originalStartDateWasMissing,
+            isAllDay: item.isAllDay,
+            repeatRule: originalSeries.repeatRule
+        )
+
+        let futureOverrides = originalState.recurringOverrides
+            .filter { $0.seriesID == seriesID && $0.occurrenceIndex >= item.repeatOccurrenceIndex }
+            .sorted { $0.occurrenceIndex < $1.occurrenceIndex }
+
+        state.recurringSeries[seriesIndex].repeatRule.endDate = previousStartDate
+        state.recurringOverrides.removeAll {
+            $0.seriesID == seriesID && $0.occurrenceIndex >= item.repeatOccurrenceIndex
+        }
+        state.recurringSeries.append(newSeries)
+
+        var translatedState = state
+        for sourceOverride in futureOverrides {
+            let translatedIndex = sourceOverride.occurrenceIndex - item.repeatOccurrenceIndex
+            guard let translatedOverride = translatedRecurringOverride(
+                sourceOverride,
+                from: originalSeries,
+                oldOccurrenceIndex: sourceOverride.occurrenceIndex,
+                to: newSeries,
+                newOccurrenceIndex: translatedIndex,
+                originalState: originalState,
+                translatedState: translatedState
+            ) else {
+                continue
+            }
+
+            upsertRecurringOverride(&state, override: translatedOverride)
+            upsertRecurringOverride(&translatedState, override: translatedOverride)
+        }
+
+        applyPersistedState(state, now: startDate)
+        return true
+    }
+
+    private func applyRecurringCompletionIfPossible(
+        item: DeadlineItem,
+        completedAt: Date
+    ) -> Bool {
+        guard
+            let seriesID = item.repeatSeriesID,
+            persistedState.recurringSeries.contains(where: { $0.seriesID == seriesID })
+        else {
+            return false
+        }
+
+        var state = persistedState
+        var override = recurringOverride(
+            in: state,
+            seriesID: seriesID,
+            occurrenceIndex: item.repeatOccurrenceIndex
+        ) ?? DeadlineRecurringOverride(
+            seriesID: seriesID,
+            occurrenceIndex: item.repeatOccurrenceIndex
+        )
+
+        override.itemID = recurringItemIDOverride(for: item)
+        override.completedAt = completedAt
+        override.isDeleted = false
+        upsertRecurringOverride(&state, override: override)
+        applyPersistedState(state, now: completedAt)
+        return true
+    }
+
+    private func applyRecurringIncompleteIfPossible(
+        item: DeadlineItem,
+        now: Date
+    ) -> DeadlineSection? {
+        guard
+            let seriesID = item.repeatSeriesID,
+            persistedState.recurringSeries.contains(where: { $0.seriesID == seriesID })
+        else {
+            return nil
+        }
+
+        var state = persistedState
+        if var override = recurringOverride(
+            in: state,
+            seriesID: seriesID,
+            occurrenceIndex: item.repeatOccurrenceIndex
+        ) {
+            override.completedAt = nil
+            if override.isEmpty {
+                removeRecurringOverride(
+                    from: &state,
+                    seriesID: seriesID,
+                    occurrenceIndex: item.repeatOccurrenceIndex
+                )
+            } else {
+                upsertRecurringOverride(&state, override: override)
+            }
+        }
+
+        applyPersistedState(state, now: now)
+        return items.first(where: { $0.id == item.id })?.section(at: now)
+    }
+
+    private func applyRecurringRemovalIfPossible(
+        item: DeadlineItem,
+        scope: DeadlineRecurringChangeScope
+    ) -> Bool {
+        guard
+            let seriesID = item.repeatSeriesID,
+            let seriesIndex = persistedState.recurringSeries.firstIndex(where: { $0.seriesID == seriesID })
+        else {
+            return false
+        }
+
+        var state = persistedState
+
+        switch scope {
+        case .thisEvent:
+            var override = recurringOverride(
+                in: state,
+                seriesID: seriesID,
+                occurrenceIndex: item.repeatOccurrenceIndex
+            ) ?? DeadlineRecurringOverride(
+                seriesID: seriesID,
+                occurrenceIndex: item.repeatOccurrenceIndex
+            )
+            override.itemID = recurringItemIDOverride(for: item)
+            override.title = nil
+            override.category = nil
+            override.detail = nil
+            override.startDate = nil
+            override.endDate = nil
+            override.completedAt = nil
+            override.isAllDay = nil
+            override.isDeleted = true
+            upsertRecurringOverride(&state, override: override)
+            applyPersistedState(state)
+            return true
+        case .futureEvents:
+            if item.repeatOccurrenceIndex == 0 {
+                state.recurringSeries.remove(at: seriesIndex)
+                state.recurringOverrides.removeAll { $0.seriesID == seriesID }
+                applyPersistedState(state)
+                return true
+            }
+
+            guard
+                let previousStartDate = recurringStartDate(
+                    for: state.recurringSeries[seriesIndex],
+                    occurrenceIndex: item.repeatOccurrenceIndex - 1,
+                    in: state
+                )
+            else {
+                return false
+            }
+
+            state.recurringSeries[seriesIndex].repeatRule.endDate = previousStartDate
+            state.recurringOverrides.removeAll {
+                $0.seriesID == seriesID && $0.occurrenceIndex >= item.repeatOccurrenceIndex
+            }
+            applyPersistedState(state)
+            return true
+        }
+    }
+
+    private func recurringOverride(
+        in state: DeadlinePersistedState,
+        seriesID: UUID,
+        occurrenceIndex: Int
+    ) -> DeadlineRecurringOverride? {
+        state.recurringOverrides.first {
+            $0.seriesID == seriesID && $0.occurrenceIndex == occurrenceIndex
+        }
+    }
+
+    private func recurringBaseDates(
+        for series: DeadlineRecurringSeries,
+        occurrenceIndex: Int
+    ) -> (startDate: Date, endDate: Date) {
+        recurringBaseDates(for: series, occurrenceIndex: occurrenceIndex, in: persistedState)
+    }
+
+    private func recurringBaseDates(
+        for series: DeadlineRecurringSeries,
+        occurrenceIndex: Int,
+        in state: DeadlinePersistedState
+    ) -> (startDate: Date, endDate: Date) {
+        let startDate = recurringStartDate(for: series, occurrenceIndex: occurrenceIndex, in: state) ?? series.startDate
+        return (
+            startDate: startDate,
+            endDate: startDate.addingTimeInterval(series.endDate.timeIntervalSince(series.startDate))
+        )
+    }
+
+    private func recurringItemIDOverride(for item: DeadlineItem) -> UUID? {
+        item.repeatOccurrenceIndex == 0 ? nil : item.id
+    }
+
+    private func translatedRecurringOverride(
+        _ sourceOverride: DeadlineRecurringOverride,
+        from originalSeries: DeadlineRecurringSeries,
+        oldOccurrenceIndex: Int,
+        to translatedSeries: DeadlineRecurringSeries,
+        newOccurrenceIndex: Int,
+        originalState: DeadlinePersistedState,
+        translatedState: DeadlinePersistedState
+    ) -> DeadlineRecurringOverride? {
+        let translatedItemID = newOccurrenceIndex == 0 ? nil : sourceOverride.itemID
+
+        if sourceOverride.isDeleted {
+            var deletedOverride = DeadlineRecurringOverride(
+                seriesID: translatedSeries.seriesID,
+                occurrenceIndex: newOccurrenceIndex
+            )
+            deletedOverride.itemID = translatedItemID
+            deletedOverride.isDeleted = true
+            return deletedOverride
+        }
+
+        let originalBaseDates = recurringBaseDates(
+            for: originalSeries,
+            occurrenceIndex: oldOccurrenceIndex,
+            in: originalState
+        )
+        let originalItem = materializedRecurringItem(
+            for: originalSeries,
+            occurrenceIndex: oldOccurrenceIndex,
+            baseStartDate: originalBaseDates.startDate,
+            baseEndDate: originalBaseDates.endDate,
+            occurrenceOverride: sourceOverride
+        )
+
+        let translatedBaseDates = recurringBaseDates(
+            for: translatedSeries,
+            occurrenceIndex: newOccurrenceIndex,
+            in: translatedState
+        )
+        let translatedBaseItem = materializedRecurringItem(
+            for: translatedSeries,
+            occurrenceIndex: newOccurrenceIndex,
+            baseStartDate: translatedBaseDates.startDate,
+            baseEndDate: translatedBaseDates.endDate,
+            occurrenceOverride: nil
+        )
+
+        return recurringOverride(
+            matching: originalItem,
+            against: translatedBaseItem,
+            seriesID: translatedSeries.seriesID,
+            occurrenceIndex: newOccurrenceIndex,
+            itemID: translatedItemID
+        )
+    }
+
+    private func recurringOverride(
+        matching actualItem: DeadlineItem,
+        against expectedItem: DeadlineItem,
+        seriesID: UUID,
+        occurrenceIndex: Int,
+        itemID: UUID?
+    ) -> DeadlineRecurringOverride? {
+        var override = DeadlineRecurringOverride(
+            seriesID: seriesID,
+            occurrenceIndex: occurrenceIndex
+        )
+
+        override.itemID = itemID
+        override.title = actualItem.title == expectedItem.title ? nil : actualItem.title
+        override.category = actualItem.category == expectedItem.category ? nil : actualItem.category
+        override.detail = actualItem.detail == expectedItem.detail ? nil : actualItem.detail
+        override.startDate = actualItem.startDate == expectedItem.startDate ? nil : actualItem.startDate
+        override.endDate = actualItem.endDate == expectedItem.endDate ? nil : actualItem.endDate
+        override.completedAt = actualItem.completedAt == expectedItem.completedAt ? nil : actualItem.completedAt
+        override.isAllDay = actualItem.isAllDay == expectedItem.isAllDay ? nil : actualItem.isAllDay
+
+        return override.isEmpty ? nil : override
+    }
+
+    private func recurringStartDate(
+        for series: DeadlineRecurringSeries,
+        occurrenceIndex: Int,
+        in state: DeadlinePersistedState
+    ) -> Date? {
+        guard occurrenceIndex >= 0 else { return nil }
+        if occurrenceIndex == 0 {
+            return state.recurringOverrides.first {
+                $0.seriesID == series.seriesID && $0.occurrenceIndex == 0
+            }?.startDate ?? series.startDate
+        }
+
+        var nextDate = series.startDate
+        for index in 1...occurrenceIndex {
+            guard let candidateDate = series.repeatRule.nextDate(after: nextDate) else { return nil }
+            nextDate = candidateDate
+            if let overrideStartDate = state.recurringOverrides.first(where: {
+                $0.seriesID == series.seriesID && $0.occurrenceIndex == index
+            })?.startDate {
+                nextDate = overrideStartDate
+            }
+        }
+        return nextDate
+    }
+
+    private func upsertRecurringOverride(
+        _ state: inout DeadlinePersistedState,
+        override: DeadlineRecurringOverride
+    ) {
+        if let existingIndex = state.recurringOverrides.firstIndex(where: {
+            $0.seriesID == override.seriesID && $0.occurrenceIndex == override.occurrenceIndex
+        }) {
+            state.recurringOverrides[existingIndex] = override
+        } else {
+            state.recurringOverrides.append(override)
+        }
+    }
+
+    private func removeRecurringOverride(
+        from state: inout DeadlinePersistedState,
+        seriesID: UUID,
+        occurrenceIndex: Int
+    ) {
+        state.recurringOverrides.removeAll {
+            $0.seriesID == seriesID && $0.occurrenceIndex == occurrenceIndex
+        }
+    }
+
+    private func conflictingFields(
+        baseItem: DeadlineItem,
+        currentItem: DeadlineItem,
+        proposedTitle: String,
+        proposedCategory: String,
+        proposedDetail: String,
+        proposedStartDate: Date,
+        proposedEndDate: Date
+    ) -> [DeadlineEditConflictField] {
+        var fields: [DeadlineEditConflictField] = []
+
+        appendConflictField(
+            to: &fields,
+            field: .title,
+            baseValue: baseItem.title,
+            currentValue: currentItem.title,
+            proposedValue: proposedTitle
+        )
+        appendConflictField(
+            to: &fields,
+            field: .category,
+            baseValue: baseItem.category,
+            currentValue: currentItem.category,
+            proposedValue: proposedCategory
+        )
+        appendConflictField(
+            to: &fields,
+            field: .detail,
+            baseValue: baseItem.detail,
+            currentValue: currentItem.detail,
+            proposedValue: proposedDetail
+        )
+        appendConflictField(
+            to: &fields,
+            field: .startDate,
+            baseValue: baseItem.startDate,
+            currentValue: currentItem.startDate,
+            proposedValue: proposedStartDate
+        )
+        appendConflictField(
+            to: &fields,
+            field: .endDate,
+            baseValue: baseItem.endDate,
+            currentValue: currentItem.endDate,
+            proposedValue: proposedEndDate
+        )
+
+        return fields
+    }
+
+    private func appendConflictField<Value: Equatable>(
+        to fields: inout [DeadlineEditConflictField],
+        field: DeadlineEditConflictField,
+        baseValue: Value,
+        currentValue: Value,
+        proposedValue: Value
+    ) {
+        guard proposedValue != baseValue else { return }
+        guard currentValue != baseValue else { return }
+        guard proposedValue != currentValue else { return }
+        fields.append(field)
+    }
+
+    private func loadSubscriptions() {
+        loadSyncedSnapshot(now: .now)
     }
 
     private func saveSubscriptions() {
-        guard let data = try? JSONEncoder().encode(subscriptions) else { return }
-        defaults.set(data, forKey: subscriptionsStorageKey)
+        let definitions = subscriptionDefinitions(from: subscriptions)
+        if syncOptions.syncSubscriptions {
+            persistence?.saveSubscriptions(definitions)
+        }
+        if let data = try? JSONEncoder().encode(definitions) {
+            defaults.set(data, forKey: subscriptionsStorageKey)
+        }
+
+        let localStates = Dictionary(uniqueKeysWithValues: subscriptions.map { subscription in
+            (
+                subscription.id.uuidString,
+                DeadlineSubscriptionLocalState(
+                    lastSyncedAt: subscription.lastSyncedAt,
+                    lastAttemptedAt: subscription.lastAttemptedAt,
+                    lastErrorMessage: subscription.lastErrorMessage
+                )
+            )
+        })
+
+        if let data = try? JSONEncoder().encode(localStates) {
+            defaults.set(data, forKey: subscriptionLocalStateStorageKey)
+        }
     }
 
     private func loadLastSubscriptionRefreshAt() {
@@ -901,19 +1943,30 @@ final class DeadlineStore: ObservableObject {
         defaults.set(selectedFilterGroup, forKey: selectedFilterGroupStorageKey)
     }
 
-    private func loadGroups() {
-        let stored = defaults.stringArray(forKey: groupsStorageKey) ?? Self.defaultGroups(for: .english)
-        let normalized = stored
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { $0.isEmpty == false }
-        var unique: [String] = []
-        for group in normalized where unique.contains(group) == false {
-            unique.append(group)
+    private func loadSyncOptions() {
+        guard
+            let data = defaults.data(forKey: syncOptionsStorageKey),
+            let decoded = try? JSONDecoder().decode(DeadlineSyncOptions.self, from: data)
+        else {
+            syncOptions = .default
+            return
         }
-        groups = unique.isEmpty ? Self.defaultGroups(for: .english) : unique
+        syncOptions = decoded
+    }
+
+    private func saveSyncOptions() {
+        guard let data = try? JSONEncoder().encode(syncOptions) else { return }
+        defaults.set(data, forKey: syncOptionsStorageKey)
+    }
+
+    private func loadGroups() {
+        loadSyncedSnapshot(now: .now)
     }
 
     private func saveGroups() {
+        if syncOptions.syncGroups {
+            persistence?.saveGroups(groups)
+        }
         defaults.set(groups, forKey: groupsStorageKey)
         DeadlineStorage.reloadWidgets()
     }
@@ -935,6 +1988,7 @@ final class DeadlineStore: ObservableObject {
 
     private func saveBackgroundStyle() {
         defaults.set(backgroundStyle.rawValue, forKey: backgroundStyleStorageKey)
+        saveSyncPreferencesIfNeeded()
     }
 
     private func loadLiquidMotionEnabled() {
@@ -947,5 +2001,303 @@ final class DeadlineStore: ObservableObject {
 
     private func saveLiquidMotionEnabled() {
         defaults.set(liquidMotionEnabled, forKey: liquidMotionEnabledStorageKey)
+    }
+
+    private func observePersistenceRemoteChanges() {
+        persistenceRemoteChangeCancellable = NotificationCenter.default
+            .publisher(for: DeadlinePersistenceController.remoteChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.loadSyncedSnapshot(now: .now)
+            }
+    }
+
+    private func syncDomainSource(isEnabled: Bool) -> DeadlineSyncDomainSource {
+        guard isEnabled else { return .localDefaults }
+        return (persistence?.isCloudSyncEnabled ?? false) ? .cloudPersistentStore : .localPersistentStore
+    }
+
+    private func reconfigurePersistence(syncEnabled: Bool) {
+        persistenceRemoteChangeCancellable = nil
+        persistence = DeadlinePersistenceController(syncEnabled: syncEnabled)
+        observePersistenceRemoteChanges()
+        loadSyncedSnapshot(now: .now)
+        lastSyncErrorMessage = nil
+        if let issue = persistence?.loadIssueDescription,
+           syncEnabled {
+            lastSyncErrorMessage = issue
+        }
+    }
+
+    private func loadSyncedSnapshot(now: Date) {
+        let snapshot = persistence?.loadSnapshot() ?? DeadlinePersistenceSnapshot(
+            state: DeadlinePersistedState(),
+            groups: [],
+            subscriptions: [],
+            syncPreferences: DeadlineSyncPreferenceSnapshot()
+        )
+        let fallbackGroups = Self.defaultGroups(for: currentStoredLanguageSelection() ?? .english)
+
+        let resolvedState = (syncOptions.syncTasks ? snapshot.state : localPersistedStateFromDefaults())
+            .removingDerivedSubscriptionData()
+        let resolvedGroups = syncOptions.syncGroups
+            ? normalizedGroups(
+                snapshot.groups.isEmpty
+                ? localGroupsFromDefaults(fallbackGroups: fallbackGroups)
+                : snapshot.groups,
+                fallbackGroups: fallbackGroups
+            )
+            : localGroupsFromDefaults(fallbackGroups: fallbackGroups)
+        let resolvedSubscriptions = syncOptions.syncSubscriptions
+            ? mergeLocalSubscriptionState(into: snapshot.subscriptions)
+            : loadLocalSubscriptionsFromDefaults()
+        let syncedLanguage = syncOptions.syncLanguage ? snapshot.syncPreferences.language : nil
+        let syncedBackgroundStyle = syncOptions.syncBackgroundStyle ? snapshot.syncPreferences.backgroundStyle : nil
+
+        isHydratingPersistence = true
+        persistedState = resolvedState
+        let resolvedSubscriptionIDs = Set(resolvedSubscriptions.compactMap(\.id))
+        let localDerivedSubscriptionItems = loadLocalDerivedSubscriptionItemsFromDefaults().filter { item in
+            guard let subscriptionID = item.subscriptionID else { return false }
+            return resolvedSubscriptionIDs.contains(subscriptionID)
+        }
+        items = DeadlineLegacyMigration.normalizeDecodedItems(
+            materializedItems(from: resolvedState, now: now) + localDerivedSubscriptionItems
+        )
+        groups = resolvedGroups
+        subscriptions = resolvedSubscriptions
+        syncedLanguageSelection = syncedLanguage
+        if let syncedBackgroundStyle {
+            backgroundStyle = syncedBackgroundStyle
+        }
+        isHydratingPersistence = false
+
+        defaults.set(resolvedGroups, forKey: groupsStorageKey)
+        if let compactData = try? JSONEncoder().encode(resolvedState) {
+            defaults.set(compactData, forKey: compactStateStorageKey)
+        }
+        if let data = try? JSONEncoder().encode(items) {
+            defaults.set(data, forKey: itemsStorageKey)
+        }
+        mirrorSubscriptionsToLocalDefaults(resolvedSubscriptions)
+        DeadlineStorage.reloadWidgets()
+        validateSelectedFilterGroup()
+    }
+
+    private func subscriptionDefinitions(from subscriptions: [DeadlineSubscription]) -> [DeadlineSubscription] {
+        subscriptions.map { subscription in
+            DeadlineSubscription(
+                id: subscription.id,
+                urlString: subscription.urlString,
+                category: subscription.category,
+                createdAt: subscription.createdAt
+            )
+        }
+    }
+
+    private func mergeLocalSubscriptionState(into subscriptions: [DeadlineSubscription]) -> [DeadlineSubscription] {
+        let localStates = loadSubscriptionLocalStates()
+        return subscriptions.map { subscription in
+            var merged = subscription
+            if let localState = localStates[subscription.id.uuidString] {
+                merged.lastSyncedAt = localState.lastSyncedAt
+                merged.lastAttemptedAt = localState.lastAttemptedAt
+                merged.lastErrorMessage = localState.lastErrorMessage
+            }
+            return merged
+        }
+    }
+
+    private func loadSubscriptionLocalStates() -> [String: DeadlineSubscriptionLocalState] {
+        guard
+            let data = defaults.data(forKey: subscriptionLocalStateStorageKey),
+            let decoded = try? JSONDecoder().decode([String: DeadlineSubscriptionLocalState].self, from: data)
+        else {
+            return [:]
+        }
+        return decoded
+    }
+
+    private func saveSyncPreferencesIfNeeded(currentLanguage: AppLanguage? = nil) {
+        guard syncOptions.syncLanguage || syncOptions.syncBackgroundStyle else { return }
+        let existingPreferences = persistence?.loadSnapshot().syncPreferences ?? DeadlineSyncPreferenceSnapshot()
+        persistence?.saveSyncPreferences(
+            DeadlineSyncPreferenceSnapshot(
+                language: syncOptions.syncLanguage ? (currentLanguage ?? currentStoredLanguageSelection()) : existingPreferences.language,
+                backgroundStyle: syncOptions.syncBackgroundStyle ? backgroundStyle : existingPreferences.backgroundStyle
+            )
+        )
+    }
+
+    private func currentStoredLanguageSelection() -> AppLanguage? {
+        defaults.string(forKey: languageSelectionStorageKey).flatMap(AppLanguage.init(rawValue:)) ?? AppLanguage.detectFromSystem()
+    }
+
+    private func localPersistedStateFromDefaults() -> DeadlinePersistedState {
+        if let compactData = defaults.data(forKey: compactStateStorageKey),
+           let state = try? JSONDecoder().decode(DeadlinePersistedState.self, from: compactData) {
+            return state.removingDerivedSubscriptionData()
+        }
+
+        guard
+            let data = defaults.data(forKey: itemsStorageKey),
+            let decoded = try? JSONDecoder().decode([DeadlineItem].self, from: data)
+        else {
+            return DeadlinePersistedState()
+        }
+
+        return DeadlineLegacyMigration.migrateLegacyItems(
+            DeadlineLegacyMigration.normalizeDecodedItems(decoded)
+        ).state.removingDerivedSubscriptionData()
+    }
+
+    private func localGroupsFromDefaults(fallbackGroups: [String]) -> [String] {
+        normalizedGroups(
+            defaults.stringArray(forKey: groupsStorageKey) ?? fallbackGroups,
+            fallbackGroups: fallbackGroups
+        )
+    }
+
+    private func normalizedGroups(_ groups: [String], fallbackGroups: [String]) -> [String] {
+        let trimmed = groups
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+
+        var unique: [String] = []
+        for group in trimmed where unique.contains(group) == false {
+            unique.append(group)
+        }
+        return unique.isEmpty ? fallbackGroups : unique
+    }
+
+    private func loadLocalSubscriptionsFromDefaults() -> [DeadlineSubscription] {
+        guard
+            let data = defaults.data(forKey: subscriptionsStorageKey),
+            let decoded = try? JSONDecoder().decode([DeadlineSubscription].self, from: data)
+        else {
+            return []
+        }
+        return mergeLocalSubscriptionState(into: decoded)
+    }
+
+    private func loadLocalDerivedSubscriptionItemsFromDefaults() -> [DeadlineItem] {
+        guard
+            let data = defaults.data(forKey: itemsStorageKey),
+            let decoded = try? JSONDecoder().decode([DeadlineItem].self, from: data)
+        else {
+            return []
+        }
+
+        return DeadlineLegacyMigration.normalizeDecodedItems(decoded).filter {
+            $0.subscriptionID != nil && $0.belongsToRepeatSeries == false
+        }
+    }
+
+    private func mirrorSubscriptionsToLocalDefaults(_ subscriptions: [DeadlineSubscription]) {
+        let definitions = subscriptionDefinitions(from: subscriptions)
+        if let data = try? JSONEncoder().encode(definitions) {
+            defaults.set(data, forKey: subscriptionsStorageKey)
+        }
+
+        let localStates = Dictionary(uniqueKeysWithValues: subscriptions.map { subscription in
+            (
+                subscription.id.uuidString,
+                DeadlineSubscriptionLocalState(
+                    lastSyncedAt: subscription.lastSyncedAt,
+                    lastAttemptedAt: subscription.lastAttemptedAt,
+                    lastErrorMessage: subscription.lastErrorMessage
+                )
+            )
+        })
+
+        if let data = try? JSONEncoder().encode(localStates) {
+            defaults.set(data, forKey: subscriptionLocalStateStorageKey)
+        }
+    }
+
+    private func persistEnabledSyncDomains() {
+        if syncOptions.syncTasks {
+            saveItems()
+        }
+        if syncOptions.syncGroups {
+            saveGroups()
+        }
+        if syncOptions.syncSubscriptions {
+            saveSubscriptions()
+        }
+        if syncOptions.syncLanguage || syncOptions.syncBackgroundStyle {
+            saveSyncPreferencesIfNeeded()
+        }
+    }
+
+    func refreshCloudAccountStatusIfNeeded() async {
+        guard syncOptions.automaticSyncEnabled else { return }
+
+        let snapshot = await DeadlineCloudSyncMonitor.fetchCurrentAccountSnapshot()
+        let storedFingerprint = defaults.string(forKey: cloudAccountFingerprintStorageKey)
+
+        switch snapshot.status {
+        case .available:
+            guard let fingerprint = snapshot.fingerprint else { return }
+
+            if let storedFingerprint, storedFingerprint != fingerprint {
+                pendingCloudAccountPrompt = DeadlineCloudAccountPrompt(fingerprint: fingerprint)
+                var updated = syncOptions
+                updated.setAutomaticSyncEnabled(false)
+                syncOptions = updated
+                reconfigurePersistence(syncEnabled: false)
+            } else if storedFingerprint == nil {
+                defaults.set(fingerprint, forKey: cloudAccountFingerprintStorageKey)
+            }
+        case .noAccount, .restricted:
+            if storedFingerprint != nil {
+                pendingCloudAccountPrompt = DeadlineCloudAccountPrompt(fingerprint: nil)
+                var updated = syncOptions
+                updated.setAutomaticSyncEnabled(false)
+                syncOptions = updated
+                reconfigurePersistence(syncEnabled: false)
+            }
+        case .temporarilyUnavailable, .couldNotDetermine:
+            break
+        @unknown default:
+            break
+        }
+    }
+
+    func resolveCloudAccountPromptByMerging() async {
+        if let fingerprint = pendingCloudAccountPrompt?.fingerprint {
+            defaults.set(fingerprint, forKey: cloudAccountFingerprintStorageKey)
+        }
+        pendingCloudAccountPrompt = nil
+        setAutomaticSyncEnabled(true)
+        await refreshCloudAccountStatusIfNeeded()
+    }
+
+    func resolveCloudAccountPromptByReplacingLocalData() async {
+        if let fingerprint = pendingCloudAccountPrompt?.fingerprint {
+            defaults.set(fingerprint, forKey: cloudAccountFingerprintStorageKey)
+        }
+
+        pendingCloudAccountPrompt = nil
+        persistenceRemoteChangeCancellable = nil
+        persistence = nil
+        DeadlinePersistenceController.destroyPersistentStoreFiles()
+        persistence = DeadlinePersistenceController(syncEnabled: true)
+        observePersistenceRemoteChanges()
+
+        var updated = syncOptions
+        updated.setAutomaticSyncEnabled(true)
+        syncOptions = updated
+
+        loadSyncedSnapshot(now: .now)
+        if let issue = persistence?.loadIssueDescription {
+            lastSyncErrorMessage = issue
+        }
+    }
+
+    func resolveCloudAccountPromptByDisablingSync() {
+        pendingCloudAccountPrompt = nil
+        setAutomaticSyncEnabled(false)
     }
 }

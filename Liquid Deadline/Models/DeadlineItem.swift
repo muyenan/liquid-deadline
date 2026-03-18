@@ -288,21 +288,22 @@ extension DeadlineItem {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         title = try container.decode(String.self, forKey: .title)
         category = try container.decode(String.self, forKey: .category)
         detail = try container.decodeIfPresent(String.self, forKey: .detail) ?? ""
         startDate = try container.decode(Date.self, forKey: .startDate)
         endDate = try container.decode(Date.self, forKey: .endDate)
         completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
-        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
-        sourceKind = try container.decodeIfPresent(DeadlineItemSourceKind.self, forKey: .sourceKind) ?? .manual
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? startDate
         subscriptionID = try container.decodeIfPresent(UUID.self, forKey: .subscriptionID)
         externalEventIdentifier = try container.decodeIfPresent(String.self, forKey: .externalEventIdentifier)
+        sourceKind = try container.decodeIfPresent(DeadlineItemSourceKind.self, forKey: .sourceKind)
+            ?? (subscriptionID != nil ? .subscribedURL : .manual)
         originalStartDateWasMissing = try container.decodeIfPresent(Bool.self, forKey: .originalStartDateWasMissing) ?? false
         isAllDay = try container.decodeIfPresent(Bool.self, forKey: .isAllDay) ?? false
         repeatSeriesID = try container.decodeIfPresent(UUID.self, forKey: .repeatSeriesID)
-        repeatOccurrenceIndex = try container.decodeIfPresent(Int.self, forKey: .repeatOccurrenceIndex) ?? 0
+        repeatOccurrenceIndex = max(try container.decodeIfPresent(Int.self, forKey: .repeatOccurrenceIndex) ?? 0, 0)
         repeatRule = try container.decodeIfPresent(DeadlineRepeatRule.self, forKey: .repeatRule)
     }
 

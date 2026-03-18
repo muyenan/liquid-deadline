@@ -85,6 +85,15 @@ final class LanguageManager: ObservableObject {
         DeadlineStorage.reloadWidgets()
     }
 
+    func applySyncedLanguage(_ language: AppLanguage) {
+        followsSystemLanguage = false
+        defaults.set(language.rawValue, forKey: storageKey)
+        if currentLanguage != language {
+            currentLanguage = language
+        }
+        DeadlineStorage.reloadWidgets()
+    }
+
     private func refreshCurrentLanguageFromSystem() {
         let detected = AppLanguage.detectFromSystem()
         if currentLanguage != detected {
@@ -120,6 +129,7 @@ struct DeadOilApp: App {
         case .active:
             store.extendRecurringItemsIfNeeded(at: .now)
             Task {
+                await store.refreshCloudAccountStatusIfNeeded()
                 await store.refreshSubscriptionsIfNeeded(now: .now)
             }
         case .background:
