@@ -14,16 +14,6 @@ struct DeadlinePersistenceSnapshot: Hashable {
     var syncPreferences: DeadlineSyncPreferenceSnapshot
 }
 
-struct DeadlineCloudEventSnapshot: Hashable, Identifiable {
-    let id: UUID
-    let storeIdentifier: String
-    let typeDescription: String
-    let startDate: Date
-    let endDate: Date?
-    let succeeded: Bool
-    let errorDescription: String?
-}
-
 enum DeadlinePersistenceError: LocalizedError {
     case storeLoadFailed(String)
 
@@ -233,38 +223,6 @@ final class DeadlinePersistenceController {
         }
     }
 
-    func fetchRecentCloudKitEvents(limit: Int = 12) -> [DeadlineCloudEventSnapshot] {
-        context.performAndWait {
-            let fetchRequest = NSPersistentCloudKitContainerEventRequest.fetchForEvents()
-            fetchRequest.sortDescriptors = [
-                NSSortDescriptor(key: "startDate", ascending: false)
-            ]
-            fetchRequest.fetchLimit = limit
-
-            let request = NSPersistentCloudKitContainerEventRequest.fetchEvents(matchingFetch: fetchRequest)
-            request.resultType = .events
-
-            guard
-                let result = try? context.execute(request) as? NSPersistentCloudKitContainerEventResult,
-                let events = result.result as? [NSPersistentCloudKitContainer.Event]
-            else {
-                return []
-            }
-
-            return events.map { event in
-                DeadlineCloudEventSnapshot(
-                    id: event.identifier,
-                    storeIdentifier: event.storeIdentifier,
-                    typeDescription: Self.describe(event.type),
-                    startDate: event.startDate,
-                    endDate: event.endDate,
-                    succeeded: event.succeeded,
-                    errorDescription: event.error.map(Self.describe)
-                )
-            }
-        }
-    }
-
     private var hasBootstrappedData: Bool {
         context.performAndWait {
             let entities = [
@@ -416,19 +374,6 @@ final class DeadlinePersistenceController {
             return "CKError(\(code.rawValue))"
         case .none:
             return ""
-        }
-    }
-
-    private static func describe(_ eventType: NSPersistentCloudKitContainer.EventType) -> String {
-        switch eventType {
-        case .setup:
-            return "setup"
-        case .import:
-            return "import"
-        case .export:
-            return "export"
-        @unknown default:
-            return "unknown"
         }
     }
 

@@ -2,44 +2,6 @@ import Foundation
 import Combine
 import CloudKit
 
-enum DeadlineSyncDomainSource: Hashable {
-    case localDefaults
-    case localPersistentStore
-    case cloudPersistentStore
-}
-
-struct DeadlineSyncDiagnostics: Hashable {
-    let refreshedAt: Date
-    let automaticSyncEnabled: Bool
-    let isCloudStoreEnabled: Bool
-    let persistenceLoadIssueDescription: String?
-    let lastSyncErrorMessage: String?
-    let cloudContainerIdentifier: String?
-    let storedAccountFingerprint: String?
-    let currentAccountStatus: CKAccountStatus
-    let currentAccountFingerprint: String?
-    let taskSource: DeadlineSyncDomainSource
-    let groupSource: DeadlineSyncDomainSource
-    let subscriptionSource: DeadlineSyncDomainSource
-    let languageSource: DeadlineSyncDomainSource
-    let backgroundSource: DeadlineSyncDomainSource
-    let currentItemCount: Int
-    let currentGroupCount: Int
-    let currentSubscriptionCount: Int
-    let storeStandaloneItemCount: Int
-    let storeLegacyRecurringItemCount: Int
-    let storeRecurringSeriesCount: Int
-    let storeRecurringOverrideCount: Int
-    let storeGroupCount: Int
-    let storeSubscriptionCount: Int
-    let localStandaloneItemCount: Int
-    let localLegacyRecurringItemCount: Int
-    let localRecurringSeriesCount: Int
-    let localRecurringOverrideCount: Int
-    let localGroupCount: Int
-    let localSubscriptionCount: Int
-}
-
 @MainActor
 final class DeadlineStore: ObservableObject {
     static func defaultGroups(for language: AppLanguage) -> [String] {
@@ -54,6 +16,8 @@ final class DeadlineStore: ObservableObject {
     static let fallbackGroupName = "Uncategorized"
     static let foregroundRefreshInterval: TimeInterval = 15 * 60
     static let backgroundRefreshRequestInterval: TimeInterval = 60 * 60
+    static let foregroundRefreshPollInterval: TimeInterval = 30
+    static let foregroundCloudRefreshInterval: TimeInterval = 30
     private static let recurrenceHorizonDays = 180
     private static let builtInGroupSets: [[String]] = [
         defaultGroups(for: .english),
@@ -118,19 +82,12 @@ final class DeadlineStore: ObservableObject {
         }
     }
     @Published var isRefreshingSubscriptions = false
-    @Published var isRefreshingSyncDiagnostics = false
     @Published var lastSyncErrorMessage: String?
     @Published var pendingCloudAccountPrompt: DeadlineCloudAccountPrompt?
     @Published private(set) var syncedLanguageSelection: AppLanguage?
-    @Published private(set) var cloudProbeSnapshot: DeadlineCloudProbeSnapshot?
-    @Published private(set) var cloudWriteProbeSnapshot: DeadlineCloudWriteProbeSnapshot?
-    @Published private(set) var recentCloudEvents: [DeadlineCloudEventSnapshot] = []
-    @Published private(set) var syncDiagnostics: DeadlineSyncDiagnostics?
     @Published private(set) var lastSubscriptionRefreshAt: Date? {
         didSet { saveLastSubscriptionRefreshAt() }
     }
-    @Published var isRunningCloudWriteProbe = false
-    @Published var isRebuildingSyncStore = false
 
     private let defaults = DeadlineStorage.sharedDefaults
     private let languageSelectionStorageKey = DeadlineStorage.languageSelectionKey
@@ -150,6 +107,8 @@ final class DeadlineStore: ObservableObject {
     private var persistence: DeadlinePersistenceController?
     private var persistedState = DeadlinePersistedState()
     private var isHydratingPersistence = false
+    private var isRunningSubscriptionRefresh = false
+    private var lastForegroundCloudRefreshAt: Date?
     private var persistenceRemoteChangeCancellable: AnyCancellable?
 
     init() {
@@ -301,28 +260,51 @@ final class DeadlineStore: ObservableObject {
     }
 
     func refreshSubscriptions(force: Bool = false, now: Date = .now) async {
-        guard subscriptions.isEmpty == false else { return }
+        guard isRunningSubscriptionRefresh == false else { return }
 
         if force == false, let lastSubscriptionRefreshAt, now.timeIntervalSince(lastSubscriptionRefreshAt) < Self.foregroundRefreshInterval {
             return
         }
 
+        isRunningSubscriptionRefresh = true
         isRefreshingSubscriptions = true
         lastSyncErrorMessage = nil
+        defer {
+            isRunningSubscriptionRefresh = false
+            isRefreshingSubscriptions = false
+        }
 
-        for subscription in subscriptions {
+        await refreshCloudDataForSubscriptionRefresh(now: now, reloadPersistence: true)
+
+        let subscriptionIDs = subscriptions.map(\.id)
+        guard subscriptionIDs.isEmpty == false else {
+            lastSubscriptionRefreshAt = now
+            return
+        }
+
+        for subscriptionID in subscriptionIDs {
             do {
-                _ = try await refreshSubscription(id: subscription.id, importedAt: now, manageLoadingState: false)
+                _ = try await refreshSubscription(id: subscriptionID, importedAt: now, manageLoadingState: false)
             } catch {
                 lastSyncErrorMessage = error.localizedDescription
             }
         }
 
-        isRefreshingSubscriptions = false
+        await refreshCloudDataForSubscriptionRefresh(now: now, reloadPersistence: false)
     }
 
     func refreshSubscriptionsIfNeeded(now: Date = .now) async {
         await refreshSubscriptions(force: false, now: now)
+    }
+
+    func refreshCloudDataIfNeeded(now: Date = .now) async {
+        guard syncOptions.automaticSyncEnabled else { return }
+        if let lastForegroundCloudRefreshAt,
+           now.timeIntervalSince(lastForegroundCloudRefreshAt) < Self.foregroundCloudRefreshInterval {
+            return
+        }
+
+        await refreshCloudDataForSubscriptionRefresh(now: now, reloadPersistence: true)
     }
 
     func extendRecurringItemsIfNeeded(at now: Date = .now) {
@@ -762,102 +744,6 @@ final class DeadlineStore: ObservableObject {
     func handleLocalLanguageSelectionChange(_ language: AppLanguage) {
         guard syncOptions.syncLanguage else { return }
         saveSyncPreferencesIfNeeded(currentLanguage: language)
-    }
-
-    func refreshSyncDiagnostics() async {
-        isRefreshingSyncDiagnostics = true
-
-        async let accountSnapshotTask = DeadlineCloudSyncMonitor.fetchCurrentAccountSnapshot()
-        async let cloudProbeTask = DeadlineCloudRecordProbe.fetchPrivateDatabaseSnapshot(
-            containerIdentifier: DeadlineStorage.cloudKitContainerIdentifier
-        )
-
-        let accountSnapshot = await accountSnapshotTask
-        let storeSnapshot = persistence?.loadSnapshot() ?? DeadlinePersistenceSnapshot(
-            state: DeadlinePersistedState(),
-            groups: [],
-            subscriptions: [],
-            syncPreferences: DeadlineSyncPreferenceSnapshot()
-        )
-        let fallbackGroups = Self.defaultGroups(for: currentStoredLanguageSelection() ?? .english)
-        let localState = localPersistedStateFromDefaults()
-        let localGroups = localGroupsFromDefaults(fallbackGroups: fallbackGroups)
-        let localSubscriptions = loadLocalSubscriptionsFromDefaults()
-        cloudProbeSnapshot = await cloudProbeTask
-        recentCloudEvents = persistence?.fetchRecentCloudKitEvents() ?? []
-
-        syncDiagnostics = DeadlineSyncDiagnostics(
-            refreshedAt: .now,
-            automaticSyncEnabled: syncOptions.automaticSyncEnabled,
-            isCloudStoreEnabled: persistence?.isCloudSyncEnabled ?? false,
-            persistenceLoadIssueDescription: persistence?.loadIssueDescription,
-            lastSyncErrorMessage: lastSyncErrorMessage,
-            cloudContainerIdentifier: DeadlineStorage.cloudKitContainerIdentifier,
-            storedAccountFingerprint: defaults.string(forKey: cloudAccountFingerprintStorageKey),
-            currentAccountStatus: accountSnapshot.status,
-            currentAccountFingerprint: accountSnapshot.fingerprint,
-            taskSource: syncDomainSource(isEnabled: syncOptions.syncTasks),
-            groupSource: syncDomainSource(isEnabled: syncOptions.syncGroups),
-            subscriptionSource: syncDomainSource(isEnabled: syncOptions.syncSubscriptions),
-            languageSource: syncDomainSource(isEnabled: syncOptions.syncLanguage),
-            backgroundSource: syncDomainSource(isEnabled: syncOptions.syncBackgroundStyle),
-            currentItemCount: items.count,
-            currentGroupCount: groups.count,
-            currentSubscriptionCount: subscriptions.count,
-            storeStandaloneItemCount: storeSnapshot.state.standaloneItems.count,
-            storeLegacyRecurringItemCount: storeSnapshot.state.legacyRecurringItems.count,
-            storeRecurringSeriesCount: storeSnapshot.state.recurringSeries.count,
-            storeRecurringOverrideCount: storeSnapshot.state.recurringOverrides.count,
-            storeGroupCount: storeSnapshot.groups.count,
-            storeSubscriptionCount: storeSnapshot.subscriptions.count,
-            localStandaloneItemCount: localState.standaloneItems.count,
-            localLegacyRecurringItemCount: localState.legacyRecurringItems.count,
-            localRecurringSeriesCount: localState.recurringSeries.count,
-            localRecurringOverrideCount: localState.recurringOverrides.count,
-            localGroupCount: localGroups.count,
-            localSubscriptionCount: localSubscriptions.count
-        )
-
-        isRefreshingSyncDiagnostics = false
-    }
-
-    func runCloudWriteProbe() async {
-        isRunningCloudWriteProbe = true
-        cloudWriteProbeSnapshot = await DeadlineCloudRecordProbe.runPrivateDatabaseWriteProbe(
-            containerIdentifier: DeadlineStorage.cloudKitContainerIdentifier
-        )
-        isRunningCloudWriteProbe = false
-    }
-
-    func rebuildSyncStoreFromLocalSnapshot() {
-        isRebuildingSyncStore = true
-        persistenceRemoteChangeCancellable = nil
-        persistence = nil
-        DeadlinePersistenceController.destroyPersistentStoreFiles()
-        persistence = DeadlinePersistenceController(syncEnabled: syncOptions.automaticSyncEnabled)
-        persistence?.bootstrapIfNeeded(fallbackGroups: Self.defaultGroups(for: currentStoredLanguageSelection() ?? .english))
-        observePersistenceRemoteChanges()
-
-        if syncOptions.syncTasks {
-            persistence?.savePersistedState(localPersistedStateFromDefaults())
-        }
-        if syncOptions.syncGroups {
-            persistence?.saveGroups(localGroupsFromDefaults(fallbackGroups: Self.defaultGroups(for: currentStoredLanguageSelection() ?? .english)))
-        }
-        if syncOptions.syncSubscriptions {
-            persistence?.saveSubscriptions(loadLocalSubscriptionsFromDefaults())
-        }
-        if syncOptions.syncLanguage || syncOptions.syncBackgroundStyle {
-            saveSyncPreferencesIfNeeded()
-        }
-
-        loadSyncedSnapshot(now: .now)
-        lastSyncErrorMessage = nil
-        if let issue = persistence?.loadIssueDescription,
-           syncOptions.automaticSyncEnabled {
-            lastSyncErrorMessage = issue
-        }
-        isRebuildingSyncStore = false
     }
 
     func addGroup(name: String) {
@@ -2013,11 +1899,6 @@ final class DeadlineStore: ObservableObject {
             }
     }
 
-    private func syncDomainSource(isEnabled: Bool) -> DeadlineSyncDomainSource {
-        guard isEnabled else { return .localDefaults }
-        return (persistence?.isCloudSyncEnabled ?? false) ? .cloudPersistentStore : .localPersistentStore
-    }
-
     private func reconfigurePersistence(syncEnabled: Bool) {
         persistenceRemoteChangeCancellable = nil
         persistence = DeadlinePersistenceController(syncEnabled: syncEnabled)
@@ -2026,6 +1907,28 @@ final class DeadlineStore: ObservableObject {
         lastSyncErrorMessage = nil
         if let issue = persistence?.loadIssueDescription,
            syncEnabled {
+            lastSyncErrorMessage = issue
+        }
+    }
+
+    private func refreshCloudDataForSubscriptionRefresh(now: Date, reloadPersistence: Bool) async {
+        guard syncOptions.automaticSyncEnabled else { return }
+
+        await refreshCloudAccountStatusIfNeeded()
+        guard syncOptions.automaticSyncEnabled else { return }
+
+        let shouldReloadPersistence = reloadPersistence && (
+            lastForegroundCloudRefreshAt.map { now.timeIntervalSince($0) >= 5 } ?? true
+        )
+
+        if shouldReloadPersistence {
+            reconfigurePersistence(syncEnabled: true)
+            lastForegroundCloudRefreshAt = now
+        } else {
+            loadSyncedSnapshot(now: now)
+        }
+
+        if let issue = persistence?.loadIssueDescription {
             lastSyncErrorMessage = issue
         }
     }

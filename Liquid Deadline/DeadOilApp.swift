@@ -107,6 +107,7 @@ final class LanguageManager: ObservableObject {
 struct DeadOilApp: App {
     @StateObject private var languageManager = LanguageManager()
     @StateObject private var store = DeadlineStore()
+    @State private var foregroundRefreshTask: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -127,16 +128,21 @@ struct DeadOilApp: App {
     private func handleScenePhaseChange(_ scenePhase: ScenePhase) {
         switch scenePhase {
         case .active:
+            startForegroundRefreshLoop()
             store.extendRecurringItemsIfNeeded(at: .now)
             Task {
                 await store.refreshCloudAccountStatusIfNeeded()
+                await store.refreshCloudDataIfNeeded(now: .now)
                 await store.refreshSubscriptionsIfNeeded(now: .now)
             }
         case .background:
+            stopForegroundRefreshLoop()
             SubscriptionRefreshScheduler.scheduleNextRefresh()
         case .inactive:
+            stopForegroundRefreshLoop()
             break
         @unknown default:
+            stopForegroundRefreshLoop()
             break
         }
     }
@@ -147,5 +153,24 @@ struct DeadOilApp: App {
         }
         await store.refreshSubscriptions(force: true, now: .now)
         SubscriptionRefreshScheduler.scheduleNextRefresh()
+    }
+
+    private func startForegroundRefreshLoop() {
+        foregroundRefreshTask?.cancel()
+        foregroundRefreshTask = Task {
+            while Task.isCancelled == false {
+                try? await Task.sleep(
+                    nanoseconds: UInt64(DeadlineStore.foregroundRefreshPollInterval * 1_000_000_000)
+                )
+                guard Task.isCancelled == false else { return }
+                await store.refreshCloudDataIfNeeded(now: .now)
+                await store.refreshSubscriptionsIfNeeded(now: .now)
+            }
+        }
+    }
+
+    private func stopForegroundRefreshLoop() {
+        foregroundRefreshTask?.cancel()
+        foregroundRefreshTask = nil
     }
 }
