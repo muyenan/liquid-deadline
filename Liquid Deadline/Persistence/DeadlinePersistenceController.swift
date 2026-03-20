@@ -136,6 +136,7 @@ final class DeadlinePersistenceController {
                     id: $0.id,
                     urlString: $0.urlString,
                     category: $0.category,
+                    reminders: $0.reminders,
                     createdAt: $0.createdAt
                 )
             },
@@ -204,6 +205,7 @@ final class DeadlinePersistenceController {
                 record.id = subscription.id
                 record.urlString = subscription.urlString
                 record.category = subscription.category
+                record.reminderData = encodeReminderData(from: subscription.reminders)
                 record.createdAt = subscription.createdAt
             }
 
@@ -472,6 +474,7 @@ final class DeadlinePersistenceController {
             record.id = subscription.id
             record.urlString = subscription.urlString
             record.category = subscription.category
+            record.reminderData = encodeReminderData(from: subscription.reminders)
             record.createdAt = subscription.createdAt
         }
     }
@@ -546,6 +549,7 @@ final class DeadlinePersistenceController {
                 id: record.id,
                 urlString: record.urlString,
                 category: record.category,
+                reminders: decodeReminderData(record.reminderData),
                 createdAt: record.createdAt
             )
         }
@@ -583,6 +587,7 @@ final class DeadlinePersistenceController {
         record.repeatRuleInterval = item.repeatRule.map { NSNumber(value: $0.interval) }
         record.repeatRuleUnitRaw = item.repeatRule?.unit.rawValue
         record.repeatRuleEndDate = item.repeatRule?.endDate
+        record.reminderData = encodeReminderData(from: item.reminders)
         record.storageKindRaw = kind.rawValue
     }
 
@@ -620,7 +625,8 @@ final class DeadlinePersistenceController {
             isAllDay: record.isAllDay,
             repeatSeriesID: record.repeatSeriesID,
             repeatOccurrenceIndex: Int(record.repeatOccurrenceIndex),
-            repeatRule: repeatRule
+            repeatRule: repeatRule,
+            reminders: decodeReminderData(record.reminderData)
         )
     }
 
@@ -641,6 +647,7 @@ final class DeadlinePersistenceController {
         record.repeatRuleInterval = Int64(series.repeatRule.interval)
         record.repeatRuleUnitRaw = series.repeatRule.unit.rawValue
         record.repeatRuleEndDate = series.repeatRule.endDate
+        record.reminderData = encodeReminderData(from: series.reminders)
     }
 
     private func makeRecurringSeries(from record: DeadlineRecurringSeriesRecord) -> DeadlineRecurringSeries? {
@@ -669,7 +676,8 @@ final class DeadlinePersistenceController {
                 interval: Int(record.repeatRuleInterval),
                 unit: unit,
                 endDate: record.repeatRuleEndDate
-            )
+            ),
+            reminders: decodeReminderData(record.reminderData)
         )
     }
 
@@ -685,6 +693,7 @@ final class DeadlinePersistenceController {
         record.endDate = override.endDate
         record.completedAt = override.completedAt
         record.isAllDay = override.isAllDay.map(NSNumber.init(value:))
+        record.reminderData = encodeReminderData(from: override.reminders)
         record.deletionFlag = override.isDeleted
     }
 
@@ -700,8 +709,29 @@ final class DeadlinePersistenceController {
             endDate: record.endDate,
             completedAt: record.completedAt,
             isAllDay: record.isAllDay?.boolValue,
+            reminders: decodeOptionalReminderData(record.reminderData),
             isDeleted: record.deletionFlag
         )
+    }
+
+    private func encodeReminderData(from reminders: [DeadlineReminder]) -> Data? {
+        guard reminders.isEmpty == false else { return nil }
+        return try? encoder.encode(reminders)
+    }
+
+    private func encodeReminderData(from reminders: [DeadlineReminder]?) -> Data? {
+        guard let reminders else { return nil }
+        return try? encoder.encode(reminders)
+    }
+
+    private func decodeReminderData(_ data: Data?) -> [DeadlineReminder] {
+        guard let data else { return [] }
+        return (try? decoder.decode([DeadlineReminder].self, from: data)) ?? []
+    }
+
+    private func decodeOptionalReminderData(_ data: Data?) -> [DeadlineReminder]? {
+        guard let data else { return nil }
+        return (try? decoder.decode([DeadlineReminder].self, from: data)) ?? []
     }
 
     private func legacyPersistedStateFromDefaults() -> DeadlinePersistedState {
@@ -793,6 +823,7 @@ final class DeadlinePersistenceController {
             attribute("repeatRuleInterval", .integer64AttributeType),
             attribute("repeatRuleUnitRaw", .stringAttributeType),
             attribute("repeatRuleEndDate", .dateAttributeType),
+            attribute("reminderData", .binaryDataAttributeType),
             attribute("storageKindRaw", .stringAttributeType, isOptional: false, defaultValue: DeadlineTaskStorageKind.standalone.rawValue)
         ]
         return entity
@@ -818,7 +849,8 @@ final class DeadlinePersistenceController {
             attribute("isAllDay", .booleanAttributeType, isOptional: false, defaultValue: false),
             attribute("repeatRuleInterval", .integer64AttributeType, isOptional: false, defaultValue: 1),
             attribute("repeatRuleUnitRaw", .stringAttributeType, isOptional: false, defaultValue: DeadlineRepeatUnit.day.rawValue),
-            attribute("repeatRuleEndDate", .dateAttributeType)
+            attribute("repeatRuleEndDate", .dateAttributeType),
+            attribute("reminderData", .binaryDataAttributeType)
         ]
         return entity
     }
@@ -839,6 +871,7 @@ final class DeadlinePersistenceController {
             attribute("endDate", .dateAttributeType),
             attribute("completedAt", .dateAttributeType),
             attribute("isAllDay", .booleanAttributeType),
+            attribute("reminderData", .binaryDataAttributeType),
             attribute("deletionFlag", .booleanAttributeType, isOptional: false, defaultValue: false)
         ]
         return entity
@@ -852,6 +885,7 @@ final class DeadlinePersistenceController {
             attribute("id", .UUIDAttributeType, isOptional: false, defaultValue: UUID()),
             attribute("urlString", .stringAttributeType, isOptional: false, defaultValue: ""),
             attribute("category", .stringAttributeType, isOptional: false, defaultValue: ""),
+            attribute("reminderData", .binaryDataAttributeType),
             attribute("createdAt", .dateAttributeType, isOptional: false, defaultValue: Date(timeIntervalSinceReferenceDate: 0))
         ]
         return entity

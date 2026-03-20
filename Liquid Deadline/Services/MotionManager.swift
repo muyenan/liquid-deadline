@@ -2,6 +2,19 @@ import Combine
 import CoreMotion
 import SwiftUI
 
+enum MotionRuntimeSupport {
+    static var isSupported: Bool {
+#if targetEnvironment(macCatalyst)
+        return false
+#else
+        if #available(iOS 14.0, *) {
+            return ProcessInfo.processInfo.isiOSAppOnMac == false
+        }
+        return true
+#endif
+    }
+}
+
 @MainActor
 final class MotionManager: ObservableObject {
     struct LiquidState {
@@ -11,7 +24,7 @@ final class MotionManager: ObservableObject {
 
     @Published private(set) var state = LiquidState()
 
-    private let manager = CMMotionManager()
+    private var manager: CMMotionManager?
     private var lastTimestamp: TimeInterval?
     private var waveEnergy: CGFloat = 0
     private let maxWaveEnergy: CGFloat = 1.55
@@ -21,15 +34,21 @@ final class MotionManager: ObservableObject {
     var liquidWaveAmplitude: CGFloat { state.waveAmplitude }
 
     init() {
+        guard MotionRuntimeSupport.isSupported else { return }
         start()
     }
 
     deinit {
-        manager.stopDeviceMotionUpdates()
+        manager?.stopDeviceMotionUpdates()
     }
 
     private func start() {
+        guard MotionRuntimeSupport.isSupported else { return }
+
+        let manager = CMMotionManager()
         guard manager.isDeviceMotionAvailable else { return }
+
+        self.manager = manager
         manager.deviceMotionUpdateInterval = 1.0 / 60.0
         manager.startDeviceMotionUpdates(to: .main) { [weak self] data, _ in
             guard let self, let data else { return }

@@ -12,6 +12,16 @@ import Combine
 enum AppLanguage: String, CaseIterable, Identifiable, Codable {
     case english
     case chinese
+    case japanese
+    case korean
+    case spanishSpain
+    case spanishMexico
+    case french
+    case german
+    case thai
+    case vietnamese
+    case indonesian
+    case russian
 
     var id: String { rawValue }
 
@@ -21,25 +31,74 @@ enum AppLanguage: String, CaseIterable, Identifiable, Codable {
             return Locale(identifier: "en")
         case .chinese:
             return Locale(identifier: "zh-Hans")
+        case .japanese:
+            return Locale(identifier: "ja")
+        case .korean:
+            return Locale(identifier: "ko")
+        case .spanishSpain:
+            return Locale(identifier: "es-ES")
+        case .spanishMexico:
+            return Locale(identifier: "es-MX")
+        case .french:
+            return Locale(identifier: "fr")
+        case .german:
+            return Locale(identifier: "de")
+        case .thai:
+            return Locale(identifier: "th")
+        case .vietnamese:
+            return Locale(identifier: "vi")
+        case .indonesian:
+            return Locale(identifier: "id")
+        case .russian:
+            return Locale(identifier: "ru")
         }
     }
 
     func title(in language: AppLanguage) -> String {
-        switch self {
-        case .english:
-            return language.text("English", "英文")
-        case .chinese:
-            return language.text("Chinese", "中文")
-        }
+        _ = language
+        return displayName
     }
 
     static func detectFromSystem() -> AppLanguage {
         let preferredLanguage = Locale.preferredLanguages.first?.lowercased() ?? ""
-        return preferredLanguage.hasPrefix("zh") ? .chinese : .english
+        if preferredLanguage.hasPrefix("zh") {
+            return .chinese
+        }
+        if preferredLanguage.hasPrefix("ja") {
+            return .japanese
+        }
+        if preferredLanguage.hasPrefix("ko") {
+            return .korean
+        }
+        if preferredLanguage.hasPrefix("es-mx") {
+            return .spanishMexico
+        }
+        if preferredLanguage.hasPrefix("es") {
+            return .spanishSpain
+        }
+        if preferredLanguage.hasPrefix("fr") {
+            return .french
+        }
+        if preferredLanguage.hasPrefix("de") {
+            return .german
+        }
+        if preferredLanguage.hasPrefix("th") {
+            return .thai
+        }
+        if preferredLanguage.hasPrefix("vi") {
+            return .vietnamese
+        }
+        if preferredLanguage.hasPrefix("ru") {
+            return .russian
+        }
+        if preferredLanguage.hasPrefix("id") || preferredLanguage.hasPrefix("in") {
+            return .indonesian
+        }
+        return .english
     }
 
     func text(_ english: String, _ chinese: String) -> String {
-        self == .chinese ? chinese : english
+        localizedText(english, chinese: chinese)
     }
 }
 

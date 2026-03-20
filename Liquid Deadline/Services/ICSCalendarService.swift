@@ -124,7 +124,7 @@ private struct ICSParser {
 
         return ICSEvent(
             uid: uid ?? fallbackUID(summary: summary, description: description, startValue: startValue, endValue: endValue, dueValue: dueValue),
-            title: summary.isEmpty ? "Untitled" : summary,
+            title: summary.isEmpty ? AppLanguage.currentForLocalization().text("Untitled", "未命名") : summary,
             detail: description,
             startValue: startValue,
             endValue: endValue,

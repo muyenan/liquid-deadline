@@ -6,6 +6,7 @@ enum DeadlineEditConflictField: Hashable {
     case detail
     case startDate
     case endDate
+    case reminders
 }
 
 struct DeadlineEditConflict: Hashable, Identifiable {
@@ -16,6 +17,7 @@ struct DeadlineEditConflict: Hashable, Identifiable {
     let proposedDetail: String
     let proposedStartDate: Date
     let proposedEndDate: Date
+    let proposedReminders: [DeadlineReminder]
     let scope: DeadlineRecurringChangeScope
     let fields: [DeadlineEditConflictField]
 }

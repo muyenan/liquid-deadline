@@ -5,7 +5,7 @@ struct ContentView: View {
     @EnvironmentObject private var languageManager: LanguageManager
     @AppStorage("deadline_selected_section_v1") private var selectedSectionStorage = DeadlineSection.inProgress.storageValue
     @ObservedObject var store: DeadlineStore
-    @State private var motion = MotionManager()
+    @StateObject private var motion = MotionManager()
     @State private var createDraft: NewDeadlineDraft?
     @State private var showingSettingsSheet = false
     @State private var editingItem: DeadlineItem?
@@ -129,7 +129,7 @@ struct ContentView: View {
             EditDeadlineSheet(
                 item: item,
                 groups: store.groups,
-                onSaveActive: { baseItem, title, category, detail, startDate, endDate, scope in
+                onSaveActive: { baseItem, title, category, detail, startDate, endDate, reminders, scope in
                     store.updateItem(
                         baseItem: baseItem,
                         title: title,
@@ -137,6 +137,7 @@ struct ContentView: View {
                         detail: detail,
                         startDate: startDate,
                         endDate: endDate,
+                        reminders: reminders,
                         scope: scope
                     )
                 },
@@ -203,6 +204,7 @@ struct ContentView: View {
                 languageManager.applySyncedLanguage(syncedLanguageSelection)
             }
             store.handleLocalLanguageSelectionChange(languageManager.currentLanguage)
+            store.refreshReminderNotifications()
             store.extendRecurringItemsIfNeeded(at: .now)
             Task {
                 await store.refreshCloudAccountStatusIfNeeded()
@@ -212,6 +214,7 @@ struct ContentView: View {
         .onChange(of: languageManager.currentLanguage) { _, newLanguage in
             store.applyDefaultGroupLocalizationIfNeeded(language: newLanguage)
             store.handleLocalLanguageSelectionChange(newLanguage)
+            store.refreshReminderNotifications()
         }
         .onChange(of: store.syncedLanguageSelection) { _, newLanguage in
             guard let newLanguage, newLanguage != languageManager.currentLanguage else { return }
@@ -570,14 +573,14 @@ private struct DeadlineRowView: View {
         let language = languageManager.currentLanguage
         switch section {
         case .notStarted:
-            return language.text(
-                "Starts in \(Self.durationText(from: now, to: item.startDate, language: language))",
-                "距开始 \(Self.durationText(from: now, to: item.startDate, language: language))"
+            return language.relativeTimeText(
+                .startsIn,
+                duration: Self.durationText(from: now, to: item.startDate, language: language)
             )
         case .inProgress:
-            return language.text(
-                "Remaining \(Self.durationText(from: now, to: item.endDate, language: language))",
-                "剩余 \(Self.durationText(from: now, to: item.endDate, language: language))"
+            return language.relativeTimeText(
+                .remaining,
+                duration: Self.durationText(from: now, to: item.endDate, language: language)
             )
         case .completed:
             return language.text("Completed", "已完成")
@@ -661,7 +664,7 @@ private struct EditDeadlineSheet: View {
 
     let item: DeadlineItem
     let groups: [String]
-    let onSaveActive: (DeadlineItem, String, String, String, Date, Date, DeadlineRecurringChangeScope) -> DeadlineEditSaveResult
+    let onSaveActive: (DeadlineItem, String, String, String, Date, Date, [DeadlineReminder], DeadlineRecurringChangeScope) -> DeadlineEditSaveResult
     let onSaveClosedDetail: (DeadlineItem, String) -> DeadlineEditSaveResult
     let onComplete: (UUID) -> Void
     let onApplyLocalConflictResolution: (DeadlineEditConflict) -> Bool
@@ -674,6 +677,8 @@ private struct EditDeadlineSheet: View {
     @State private var detail: String = ""
     @State private var startDate: Date = .now
     @State private var endDate: Date = .now
+    @State private var reminders: [DeadlineReminder] = []
+    @State private var selectedReminder: ReminderSelection?
     @State private var showError = false
     @State private var showDeleteConfirm = false
     @State private var showCompleteConfirm = false
@@ -785,6 +790,23 @@ private struct EditDeadlineSheet: View {
                     }
                 }
 
+                Section {
+                    if isClosedTask || isSubscriptionManaged {
+                        LabeledContent(
+                            languageManager.currentLanguage.reminderTitle,
+                            value: languageManager.currentLanguage.reminderListSummary(reminders)
+                        )
+                    } else {
+                        ReminderListEditor(
+                            language: languageManager.currentLanguage,
+                            reminders: $reminders,
+                            selectedReminder: $selectedReminder
+                        )
+                    }
+                } header: {
+                    Text(languageManager.currentLanguage.reminderTitle)
+                }
+
                 if canMarkComplete {
                     Section {
                         Button(t("Mark as Completed", "标记为已完成")) {
@@ -837,11 +859,11 @@ private struct EditDeadlineSheet: View {
                             Button(t("Cancel", "取消"), role: .cancel) { }
                         }
                         .confirmationDialog(t("Delete recurring task", "删除重复事项"), isPresented: $showRepeatDeleteOptions, titleVisibility: .visible) {
-                            Button(t("Only This Event", "仅删除本次日程"), role: .destructive) {
+                            Button(languageManager.currentLanguage.recurringDeleteThisEventTitle, role: .destructive) {
                                 onDelete(item.id, .thisEvent)
                                 dismiss()
                             }
-                            Button(t("This and Future Events", "删除将来所有日程"), role: .destructive) {
+                            Button(languageManager.currentLanguage.recurringDeleteFutureEventsTitle, role: .destructive) {
                                 onDelete(item.id, .futureEvents)
                                 dismiss()
                             }
@@ -859,6 +881,16 @@ private struct EditDeadlineSheet: View {
                 }
             }
             .navigationTitle(t("Edit Task", "编辑事项"))
+            .overlay {
+                if let selectedReminder {
+                    ReminderWheelPickerOverlay(
+                        language: languageManager.currentLanguage,
+                        reminder: $reminders.reminderBinding(for: selectedReminder.id)
+                    ) {
+                        self.selectedReminder = nil
+                    }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(t("Cancel", "取消")) { dismiss() }
@@ -869,10 +901,10 @@ private struct EditDeadlineSheet: View {
                 }
             }
             .confirmationDialog(t("Edit recurring task", "修改重复事项"), isPresented: $showRepeatSaveOptions, titleVisibility: .visible) {
-                Button(t("Only This Event", "仅修改本次日程")) {
+                Button(languageManager.currentLanguage.recurringEditThisEventTitle) {
                     performSave(scope: .thisEvent)
                 }
-                Button(t("This and Future Events", "修改将来所有日程")) {
+                Button(languageManager.currentLanguage.recurringEditFutureEventsTitle) {
                     performSave(scope: .futureEvents)
                 }
                 Button(t("Cancel", "取消"), role: .cancel) { }
@@ -914,6 +946,7 @@ private struct EditDeadlineSheet: View {
                 detail = item.detail
                 startDate = item.startDate
                 endDate = item.endDate
+                reminders = item.reminders
                 selectedGroup = groups.contains(item.category) ? item.category : (groups.first ?? DeadlineStore.fallbackGroupName)
             }
             .onChange(of: groups) { _, newGroups in
@@ -961,7 +994,7 @@ private struct EditDeadlineSheet: View {
     }
 
     private func performSave(scope: DeadlineRecurringChangeScope) {
-        let result = onSaveActive(item, title, selectedGroup, detail, startDate, endDate, scope)
+        let result = onSaveActive(item, title, selectedGroup, detail, startDate, endDate, reminders, scope)
         handleSaveResult(result)
     }
 
@@ -980,15 +1013,15 @@ private struct EditDeadlineSheet: View {
         detail = item.detail
         startDate = item.startDate
         endDate = item.endDate
+        reminders = item.reminders
     }
 
     private func conflictDescription(for conflict: DeadlineEditConflict) -> String {
         let labels = conflict.fields.map(conflictFieldTitle(_:))
-        let joinedFields = ListFormatter.localizedString(byJoining: labels)
-        return t(
-            "The field(s) \(joinedFields) were changed on another device while you were editing. Choose whether to keep your local changes or use the latest iCloud values.",
-            "你编辑期间，字段 \(joinedFields) 已在其他设备上被修改。请选择保留本地修改，或使用最新的云端数据。"
-        )
+        let formatter = ListFormatter()
+        formatter.locale = languageManager.currentLanguage.locale
+        let joinedFields = formatter.string(from: labels) ?? labels.joined(separator: ", ")
+        return languageManager.currentLanguage.conflictDescription(changedFields: joinedFields)
     }
 
     private func conflictFieldTitle(_ field: DeadlineEditConflictField) -> String {
@@ -1003,6 +1036,8 @@ private struct EditDeadlineSheet: View {
             return t("Start Time", "起始时间")
         case .endDate:
             return t("End Time", "结束时间")
+        case .reminders:
+            return languageManager.currentLanguage.reminderTitle
         }
     }
 }
@@ -1130,14 +1165,14 @@ private struct SettingsView: View {
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
                         .contextMenu {
-                            Button(t("Edit \(group)", "编辑 \(group)"), systemImage: "pencil") {
+                            Button(languageManager.currentLanguage.editGroupActionTitle(group), systemImage: "pencil") {
                                 renameTargetGroup = group
                                 renameInputText = group
                                 showingRenameAlert = true
                             }
 
                             if store.groups.count > 1 {
-                                Button(t("Delete \(group)", "删除 \(group)"), systemImage: "trash", role: .destructive) {
+                                Button(languageManager.currentLanguage.deleteGroupActionTitle(group), systemImage: "trash", role: .destructive) {
                                     store.removeGroup(named: group)
                                 }
                             }
@@ -1201,6 +1236,7 @@ private struct SettingsView: View {
 
                 Section {
                     Toggle(t("Liquid Motion", "液态动效"), isOn: $store.liquidMotionEnabled)
+                        .disabled(MotionRuntimeSupport.isSupported == false)
                 } header: {
                     Text(t("Motion", "动效"))
                 } footer: {
@@ -1223,7 +1259,7 @@ private struct SettingsView: View {
                     Button(t("Done", "完成")) { dismiss() }
                 }
             }
-            .alert(t("Edit Group: \(renameTargetGroup ?? "")", "编辑分组：\(renameTargetGroup ?? "")"), isPresented: $showingRenameAlert) {
+            .alert(languageManager.currentLanguage.editGroupAlertTitle(renameTargetGroup ?? ""), isPresented: $showingRenameAlert) {
                 TextField(t("Group Name", "分组名称"), text: $renameInputText)
                 Button(t("Cancel", "取消"), role: .cancel) { }
                 Button(t("Save", "保存")) {
@@ -1355,6 +1391,10 @@ private struct SubscriptionRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            Text(language.reminderListSummary(subscription.reminders))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
             Text(secondaryText)
                 .font(.caption2)
                 .foregroundStyle(subscription.lastErrorMessage == nil ? Color.secondary : Color.red)
@@ -1365,76 +1405,31 @@ private struct SubscriptionRow: View {
 }
 
 private struct PrivacyPolicyView: View {
+    @EnvironmentObject private var languageManager: LanguageManager
+
+    private var content: PrivacyPolicyContent {
+        languageManager.currentLanguage.privacyPolicyContent
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Privacy Policy")
+                Text(content.title)
                     .font(.title2.weight(.bold))
 
-                Text("Effective date: March 12, 2026")
+                Text(content.effectiveDate)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 
-                languageHeader("English")
-                policySection(
-                    title: "1. Data Processing",
-                    body: "Liquid Deadline does not collect, upload, sell, rent, or share your personal information. Your tasks, categories, descriptions, and settings are stored locally on your device only."
-                )
-                policySection(
-                    title: "2. Network Services",
-                    body: "The app does not provide account registration, cloud sync, or server-side storage. If you choose to subscribe to an external calendar URL, the app fetches that feed directly from your device to import or refresh tasks. The developer does not receive or store that calendar data on a server."
-                )
-                policySection(
-                    title: "3. Third-Party Sharing",
-                    body: "The app does not share your personal information with third parties for advertising, analytics, or profiling."
-                )
-                policySection(
-                    title: "4. Your Responsibility",
-                    body: "You are responsible for how you use this app and for verifying any task, reminder, or deadline information you enter. The developer is not liable for losses, delays, missed deadlines, or other adverse consequences arising from the use of this app, to the extent permitted by applicable law."
-                )
-                policySection(
-                    title: "5. Contact",
-                    body: "If you have privacy questions, contact the developer through the contact method provided on the App Store product page."
-                )
-
-                Divider()
-                    .padding(.vertical, 4)
-
-                languageHeader("中文")
-                policySection(
-                    title: "1. 数据处理",
-                    body: "Liquid Deadline 不会收集、上传、出售、出租或共享你的个人信息。你的事项、分类、描述和设置仅保存在你的设备本地。"
-                )
-                policySection(
-                    title: "2. 网络服务",
-                    body: "本应用不提供账号注册、云同步或服务器端存储。如果你选择订阅外部日历 URL，应用会仅在你的设备上直接拉取该日历内容，用于导入或刷新事项。开发者不会在服务器端接收或存储这些日历数据。"
-                )
-                policySection(
-                    title: "3. 第三方共享",
-                    body: "本应用不会为了广告、分析或画像目的向第三方共享你的个人信息。"
-                )
-                policySection(
-                    title: "4. 用户责任",
-                    body: "你应自行决定如何使用本应用，并自行核对你录入的事项、提醒和截止时间信息。在适用法律允许的范围内，开发者不对因使用本应用而产生的损失、延误、错过截止时间或其他不良后果承担责任。"
-                )
-                policySection(
-                    title: "5. 联系方式",
-                    body: "如果你对隐私问题有疑问，请通过 App Store 产品页提供的联系方式联系开发者。"
-                )
+                ForEach(Array(content.sections.enumerated()), id: \.offset) { _, section in
+                    policySection(title: section.title, body: section.body)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(20)
         }
-        .navigationTitle("Privacy Policy")
+        .navigationTitle(content.title)
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private func languageHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.headline)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Color.secondary.opacity(0.12), in: Capsule())
     }
 
     private func policySection(title: String, body: String) -> some View {

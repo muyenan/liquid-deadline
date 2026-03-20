@@ -19,14 +19,14 @@ struct OilGridCellView: View {
         let language = languageManager.currentLanguage
         switch section {
         case .notStarted:
-            return language.text(
-                "Starts in \(Self.durationText(from: now, to: item.startDate, language: language))",
-                "距开始 \(Self.durationText(from: now, to: item.startDate, language: language))"
+            return language.relativeTimeText(
+                .startsIn,
+                duration: Self.durationText(from: now, to: item.startDate, language: language)
             )
         case .inProgress:
-            return language.text(
-                "Remaining \(Self.durationText(from: now, to: item.endDate, language: language))",
-                "剩余 \(Self.durationText(from: now, to: item.endDate, language: language))"
+            return language.relativeTimeText(
+                .remaining,
+                duration: Self.durationText(from: now, to: item.endDate, language: language)
             )
         case .completed:
             return language.text("Completed", "已完成")

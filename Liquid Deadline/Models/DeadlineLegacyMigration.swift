@@ -9,6 +9,7 @@ enum DeadlineLegacyMigration {
         case endDate
         case completedAt
         case isAllDay
+        case reminders
         case missingOccurrence
     }
 
@@ -115,6 +116,9 @@ enum DeadlineLegacyMigration {
         preferred.completedAt = preferred.completedAt ?? secondary.completedAt
         preferred.createdAt = min(preferred.createdAt, secondary.createdAt)
         preferred.originalStartDateWasMissing = preferred.originalStartDateWasMissing || secondary.originalStartDateWasMissing
+        if preferred.reminders.isEmpty {
+            preferred.reminders = secondary.reminders
+        }
         return preferred
     }
 
@@ -306,7 +310,8 @@ enum DeadlineLegacyMigration {
             externalEventIdentifier: seed.externalEventIdentifier,
             originalStartDateWasMissing: seed.originalStartDateWasMissing,
             isAllDay: seed.isAllDay,
-            repeatRule: repeatRule
+            repeatRule: repeatRule,
+            reminders: seed.reminders
         )
 
         let plan = RecurringSeriesPlan(
@@ -336,6 +341,7 @@ enum DeadlineLegacyMigration {
             endDate: modifiedFields.contains(.endDate) ? actualItem.endDate : nil,
             completedAt: modifiedFields.contains(.completedAt) ? actualItem.completedAt : nil,
             isAllDay: modifiedFields.contains(.isAllDay) ? actualItem.isAllDay : nil,
+            reminders: modifiedFields.contains(.reminders) ? actualItem.reminders : nil,
             isDeleted: false
         )
     }
@@ -373,7 +379,8 @@ enum DeadlineLegacyMigration {
             isAllDay: seed.isAllDay,
             repeatSeriesID: seed.repeatSeriesID,
             repeatOccurrenceIndex: occurrenceIndex,
-            repeatRule: occurrenceIndex == 0 ? seed.repeatRule : nil
+            repeatRule: occurrenceIndex == 0 ? seed.repeatRule : nil,
+            reminders: seed.reminders
         )
     }
 
@@ -403,6 +410,9 @@ enum DeadlineLegacyMigration {
         }
         if actualItem.isAllDay != expectedItem.isAllDay {
             fields.insert(.isAllDay)
+        }
+        if actualItem.reminders != expectedItem.reminders {
+            fields.insert(.reminders)
         }
 
         return fields

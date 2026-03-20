@@ -2,28 +2,15 @@ import AppIntents
 import Foundation
 
 enum WidgetCategoryCatalog {
-    struct BuiltInCategory {
-        let id: String
-        let englishName: String
-        let chineseName: String
-
-        func displayName(in language: WidgetLanguage) -> String {
-            language.text(englishName, chineseName)
-        }
-    }
-
     static let allIdentifier = "__all__"
-
-    static let builtInCategories: [BuiltInCategory] = [
-        BuiltInCategory(id: "study", englishName: "Study", chineseName: "学习"),
-        BuiltInCategory(id: "work", englishName: "Work", chineseName: "工作"),
-        BuiltInCategory(id: "life", englishName: "Life", chineseName: "生活"),
-        BuiltInCategory(id: "health", englishName: "Health", chineseName: "健康"),
-        BuiltInCategory(id: "finance", englishName: "Finance", chineseName: "财务")
-    ]
+    static let builtInCategoryIdentifiers = ["study", "work", "life", "health", "finance"]
 
     static func allEntity(in language: WidgetLanguage) -> WidgetCategoryEntity {
         WidgetCategoryEntity(id: allIdentifier, name: language.text("All Categories", "全部分类"))
+    }
+
+    static func displayName(for identifier: String, language: WidgetLanguage) -> String? {
+        language.builtInCategoryName(for: identifier)
     }
 
     static func canonicalIdentifier(for rawName: String) -> String {
@@ -34,10 +21,15 @@ enum WidgetCategoryCatalog {
             return allIdentifier
         }
 
-        if let builtIn = builtInCategories.first(where: {
-            $0.englishName == trimmed || $0.chineseName == trimmed || $0.id == trimmed
-        }) {
-            return builtIn.id
+        for identifier in builtInCategoryIdentifiers {
+            if identifier == trimmed {
+                return identifier
+            }
+            for language in WidgetLanguage.allCases {
+                if displayName(for: identifier, language: language) == trimmed {
+                    return identifier
+                }
+            }
         }
 
         return trimmed
@@ -50,8 +42,8 @@ enum WidgetCategoryCatalog {
             return allEntity(in: language)
         }
 
-        if let builtIn = builtInCategories.first(where: { $0.id == normalizedIdentifier }) {
-            return WidgetCategoryEntity(id: builtIn.id, name: builtIn.displayName(in: language))
+        if let builtInName = displayName(for: normalizedIdentifier, language: language) {
+            return WidgetCategoryEntity(id: normalizedIdentifier, name: builtInName)
         }
 
         if let availableName = availableGroupNames.first(where: { canonicalIdentifier(for: $0) == normalizedIdentifier }) {
@@ -118,7 +110,9 @@ struct WidgetCategoryEntity: AppEntity, Identifiable, Hashable {
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Category")
     static let defaultQuery = WidgetCategoryQuery()
-    static let all = WidgetCategoryEntity(id: allIdentifier, name: "All Categories")
+    static var all: WidgetCategoryEntity {
+        WidgetCategoryCatalog.allEntity(in: WidgetLanguage.systemCurrent())
+    }
 
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(title: LocalizedStringResource(stringLiteral: name))
@@ -142,7 +136,7 @@ struct WidgetCategoryQuery: EntityQuery {
 
     private func loadStoredGroups(language: WidgetLanguage) -> [String] {
         let defaults = UserDefaults(suiteName: WidgetSharedDefaults.appGroupID) ?? .standard
-        let fallbackGroups = WidgetCategoryCatalog.builtInCategories.map { $0.displayName(in: language) }
+        let fallbackGroups = WidgetCategoryCatalog.builtInCategoryIdentifiers.compactMap { WidgetCategoryCatalog.displayName(for: $0, language: language) }
 
         return (defaults.stringArray(forKey: WidgetSharedDefaults.groupsStorageKey) ?? fallbackGroups)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }

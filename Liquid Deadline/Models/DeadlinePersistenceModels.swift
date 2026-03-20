@@ -16,8 +16,80 @@ struct DeadlineRecurringSeries: Identifiable, Codable, Hashable {
     var originalStartDateWasMissing: Bool
     var isAllDay: Bool
     var repeatRule: DeadlineRepeatRule
+    var reminders: [DeadlineReminder]
 
     var id: UUID { seriesID }
+
+    init(
+        seriesID: UUID,
+        seedItemID: UUID,
+        title: String,
+        category: String,
+        detail: String,
+        startDate: Date,
+        endDate: Date,
+        createdAt: Date,
+        sourceKind: DeadlineItemSourceKind,
+        subscriptionID: UUID? = nil,
+        externalEventIdentifier: String? = nil,
+        originalStartDateWasMissing: Bool = false,
+        isAllDay: Bool = false,
+        repeatRule: DeadlineRepeatRule,
+        reminders: [DeadlineReminder] = []
+    ) {
+        self.seriesID = seriesID
+        self.seedItemID = seedItemID
+        self.title = title
+        self.category = category
+        self.detail = detail
+        self.startDate = startDate
+        self.endDate = endDate
+        self.createdAt = createdAt
+        self.sourceKind = sourceKind
+        self.subscriptionID = subscriptionID
+        self.externalEventIdentifier = externalEventIdentifier
+        self.originalStartDateWasMissing = originalStartDateWasMissing
+        self.isAllDay = isAllDay
+        self.repeatRule = repeatRule
+        self.reminders = reminders
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case seriesID
+        case seedItemID
+        case title
+        case category
+        case detail
+        case startDate
+        case endDate
+        case createdAt
+        case sourceKind
+        case subscriptionID
+        case externalEventIdentifier
+        case originalStartDateWasMissing
+        case isAllDay
+        case repeatRule
+        case reminders
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        seriesID = try container.decode(UUID.self, forKey: .seriesID)
+        seedItemID = try container.decode(UUID.self, forKey: .seedItemID)
+        title = try container.decode(String.self, forKey: .title)
+        category = try container.decode(String.self, forKey: .category)
+        detail = try container.decode(String.self, forKey: .detail)
+        startDate = try container.decode(Date.self, forKey: .startDate)
+        endDate = try container.decode(Date.self, forKey: .endDate)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? .now
+        sourceKind = try container.decodeIfPresent(DeadlineItemSourceKind.self, forKey: .sourceKind) ?? .manual
+        subscriptionID = try container.decodeIfPresent(UUID.self, forKey: .subscriptionID)
+        externalEventIdentifier = try container.decodeIfPresent(String.self, forKey: .externalEventIdentifier)
+        originalStartDateWasMissing = try container.decodeIfPresent(Bool.self, forKey: .originalStartDateWasMissing) ?? false
+        isAllDay = try container.decodeIfPresent(Bool.self, forKey: .isAllDay) ?? false
+        repeatRule = try container.decode(DeadlineRepeatRule.self, forKey: .repeatRule)
+        reminders = try container.decodeIfPresent([DeadlineReminder].self, forKey: .reminders) ?? []
+    }
 }
 
 struct DeadlineRecurringOverride: Identifiable, Codable, Hashable {
@@ -31,6 +103,7 @@ struct DeadlineRecurringOverride: Identifiable, Codable, Hashable {
     var endDate: Date? = nil
     var completedAt: Date? = nil
     var isAllDay: Bool? = nil
+    var reminders: [DeadlineReminder]? = nil
     var isDeleted: Bool = false
 
     var id: String {
@@ -46,7 +119,67 @@ struct DeadlineRecurringOverride: Identifiable, Codable, Hashable {
         endDate == nil &&
         completedAt == nil &&
         isAllDay == nil &&
+        reminders == nil &&
         isDeleted == false
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case seriesID
+        case occurrenceIndex
+        case itemID
+        case title
+        case category
+        case detail
+        case startDate
+        case endDate
+        case completedAt
+        case isAllDay
+        case reminders
+        case isDeleted
+    }
+
+    init(
+        seriesID: UUID,
+        occurrenceIndex: Int,
+        itemID: UUID? = nil,
+        title: String? = nil,
+        category: String? = nil,
+        detail: String? = nil,
+        startDate: Date? = nil,
+        endDate: Date? = nil,
+        completedAt: Date? = nil,
+        isAllDay: Bool? = nil,
+        reminders: [DeadlineReminder]? = nil,
+        isDeleted: Bool = false
+    ) {
+        self.seriesID = seriesID
+        self.occurrenceIndex = occurrenceIndex
+        self.itemID = itemID
+        self.title = title
+        self.category = category
+        self.detail = detail
+        self.startDate = startDate
+        self.endDate = endDate
+        self.completedAt = completedAt
+        self.isAllDay = isAllDay
+        self.reminders = reminders
+        self.isDeleted = isDeleted
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        seriesID = try container.decode(UUID.self, forKey: .seriesID)
+        occurrenceIndex = try container.decode(Int.self, forKey: .occurrenceIndex)
+        itemID = try container.decodeIfPresent(UUID.self, forKey: .itemID)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        category = try container.decodeIfPresent(String.self, forKey: .category)
+        detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        startDate = try container.decodeIfPresent(Date.self, forKey: .startDate)
+        endDate = try container.decodeIfPresent(Date.self, forKey: .endDate)
+        completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        isAllDay = try container.decodeIfPresent(Bool.self, forKey: .isAllDay)
+        reminders = try container.decodeIfPresent([DeadlineReminder].self, forKey: .reminders)
+        isDeleted = try container.decodeIfPresent(Bool.self, forKey: .isDeleted) ?? false
     }
 }
 
@@ -58,7 +191,7 @@ struct DeadlinePersistedState: Codable, Hashable {
     var recurringOverrides: [DeadlineRecurringOverride]
 
     init(
-        schemaVersion: Int = 2,
+        schemaVersion: Int = 3,
         standaloneItems: [DeadlineItem] = [],
         legacyRecurringItems: [DeadlineItem] = [],
         recurringSeries: [DeadlineRecurringSeries] = [],

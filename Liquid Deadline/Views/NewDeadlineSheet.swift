@@ -33,6 +33,8 @@ struct NewDeadlineSheet: View {
     @State private var detail: String
     @State private var startDate: Date
     @State private var endDate: Date
+    @State private var reminders: [DeadlineReminder] = []
+    @State private var selectedReminder: ReminderSelection?
     @State private var repeatSelection: RepeatMenuSelection = .none
     @State private var customRepeatUnit: DeadlineRepeatUnit = .day
     @State private var customRepeatInterval = 1
@@ -86,9 +88,9 @@ struct NewDeadlineSheet: View {
     }
 
     private var repeatIntervalSummaryText: String {
-        languageManager.currentLanguage.text(
-            "\(customRepeatInterval) \(customRepeatUnit.title(in: .english))",
-            "\(customRepeatInterval)\(customRepeatUnit.title(in: .chinese))"
+        languageManager.currentLanguage.repeatIntervalSummary(
+            interval: customRepeatInterval,
+            unit: customRepeatUnit
         )
     }
 
@@ -192,6 +194,16 @@ struct NewDeadlineSheet: View {
                 }
 
                 Section {
+                    ReminderListEditor(
+                        language: languageManager.currentLanguage,
+                        reminders: $reminders,
+                        selectedReminder: $selectedReminder
+                    )
+                } header: {
+                    Text(languageManager.currentLanguage.reminderTitle)
+                }
+
+                Section {
                     ImportActionButton(
                         title: t("Use URL Subscription", "使用URL订阅"),
                         subtitle: t("Subscribe to an external calendar feed.", "通过外部日历链接订阅事项。"),
@@ -219,6 +231,16 @@ struct NewDeadlineSheet: View {
                 }
             }
             .navigationTitle(t("New Task", "新建事项"))
+            .overlay {
+                if let selectedReminder {
+                    ReminderWheelPickerOverlay(
+                        language: languageManager.currentLanguage,
+                        reminder: $reminders.reminderBinding(for: selectedReminder.id)
+                    ) {
+                        self.selectedReminder = nil
+                    }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(t("Cancel", "取消")) { dismiss() }
@@ -412,6 +434,7 @@ struct NewDeadlineSheet: View {
             detail: detail,
             startDate: startDate,
             endDate: endDate,
+            reminders: reminders,
             repeatRule: repeatRule
         )
         dismiss()
@@ -484,6 +507,8 @@ private struct URLSubscriptionSheet: View {
 
     @State private var urlText = ""
     @State private var selectedGroup = ""
+    @State private var reminders: [DeadlineReminder] = []
+    @State private var selectedReminder: ReminderSelection?
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -511,6 +536,16 @@ private struct URLSubscriptionSheet: View {
                     Text(t("If an event in the feed has no start time, the import time is used as the start time. Future refreshes keep the first seen start time.", "如果订阅里的事件没有开始时间，会使用首次导入时间作为开始时间；后续刷新会保留第一次出现时的开始时间。"))
                 }
 
+                Section {
+                    ReminderListEditor(
+                        language: languageManager.currentLanguage,
+                        reminders: $reminders,
+                        selectedReminder: $selectedReminder
+                    )
+                } header: {
+                    Text(languageManager.currentLanguage.reminderTitle)
+                }
+
                 if let errorMessage {
                     Text(errorMessage)
                         .font(.footnote)
@@ -518,6 +553,16 @@ private struct URLSubscriptionSheet: View {
                 }
             }
             .navigationTitle(t("Use URL Subscription", "使用URL订阅"))
+            .overlay {
+                if let selectedReminder {
+                    ReminderWheelPickerOverlay(
+                        language: languageManager.currentLanguage,
+                        reminder: $reminders.reminderBinding(for: selectedReminder.id)
+                    ) {
+                        self.selectedReminder = nil
+                    }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(t("Cancel", "取消")) { dismiss() }
@@ -555,7 +600,11 @@ private struct URLSubscriptionSheet: View {
 
         Task {
             do {
-                try await store.addSubscription(urlString: trimmedURL, category: selectedGroup)
+                try await store.addSubscription(
+                    urlString: trimmedURL,
+                    category: selectedGroup,
+                    reminders: reminders
+                )
                 isSaving = false
                 dismiss()
                 onSuccess()
@@ -618,9 +667,14 @@ private struct FileImportSetupSheet: View {
 
 private struct RepeatIntervalPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var languageManager: LanguageManager
     @Binding var selectedValue: Int
 
     let title: String
+
+    private func t(_ english: String, _ chinese: String) -> String {
+        languageManager.currentLanguage.text(english, chinese)
+    }
 
     var body: some View {
         NavigationStack {
@@ -637,7 +691,7 @@ private struct RepeatIntervalPickerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button(t("Done", "完成")) { dismiss() }
                 }
             }
         }

@@ -9,9 +9,19 @@ enum WidgetSharedDefaults {
     static let languageSelectionKey = "deadline_oil_language_selection_v1"
 }
 
-enum WidgetLanguage: String {
+enum WidgetLanguage: String, CaseIterable {
     case english
     case chinese
+    case japanese
+    case korean
+    case spanishSpain
+    case spanishMexico
+    case french
+    case german
+    case thai
+    case vietnamese
+    case indonesian
+    case russian
 
     var locale: Locale {
         switch self {
@@ -19,6 +29,26 @@ enum WidgetLanguage: String {
             return Locale(identifier: "en")
         case .chinese:
             return Locale(identifier: "zh-Hans")
+        case .japanese:
+            return Locale(identifier: "ja")
+        case .korean:
+            return Locale(identifier: "ko")
+        case .spanishSpain:
+            return Locale(identifier: "es-ES")
+        case .spanishMexico:
+            return Locale(identifier: "es-MX")
+        case .french:
+            return Locale(identifier: "fr")
+        case .german:
+            return Locale(identifier: "de")
+        case .thai:
+            return Locale(identifier: "th")
+        case .vietnamese:
+            return Locale(identifier: "vi")
+        case .indonesian:
+            return Locale(identifier: "id")
+        case .russian:
+            return Locale(identifier: "ru")
         }
     }
 
@@ -28,20 +58,15 @@ enum WidgetLanguage: String {
            let language = WidgetLanguage(rawValue: stored) {
             return language
         }
-
-        // Match the main app: if no explicit language has been saved yet,
-        // follow the current system language.
-        let preferredLanguage = Locale.preferredLanguages.first?.lowercased() ?? ""
-        return preferredLanguage.hasPrefix("zh") ? .chinese : .english
+        return detectFromSystem()
     }
 
     static func systemCurrent() -> WidgetLanguage {
-        let preferredLanguage = Locale.preferredLanguages.first?.lowercased() ?? ""
-        return preferredLanguage.hasPrefix("zh") ? .chinese : .english
+        detectFromSystem()
     }
 
     func text(_ english: String, _ chinese: String) -> String {
-        self == .chinese ? chinese : english
+        localizedText(english, chinese: chinese)
     }
 }
 
@@ -123,10 +148,10 @@ struct WidgetTaskSnapshot: Identifiable {
     let startDate: Date
     let endDate: Date
     let countdownTarget: Date
+    let countdownKind: WidgetRelativeTimeKind
+    let countdownDuration: WidgetRelativeDuration
     let progress: Double
     let tint: Color
-    let countdownTextEnglish: String
-    let countdownTextChinese: String
 }
 
 struct LiquidDeadlineWidgetEntry: TimelineEntry {
@@ -221,7 +246,7 @@ private struct LiquidDeadlineWidgetRepository {
     private let defaults = UserDefaults(suiteName: WidgetSharedDefaults.appGroupID) ?? .standard
 
     func availableGroupNames(language: WidgetLanguage) -> [String] {
-        let fallbackGroups = WidgetCategoryCatalog.builtInCategories.map { $0.displayName(in: language) }
+        let fallbackGroups = WidgetCategoryCatalog.builtInCategoryIdentifiers.compactMap { language.builtInCategoryName(for: $0) }
         return (defaults.stringArray(forKey: WidgetSharedDefaults.groupsStorageKey) ?? fallbackGroups)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -267,12 +292,7 @@ private struct LiquidDeadlineWidgetRepository {
 
         return sortedItems.map { item in
             let countdownTarget = section == .notStarted ? item.startDate : item.endDate
-            let countdownText = countdownText(
-                for: countdownTarget,
-                now: now,
-                prefixEnglish: section == .notStarted ? "Starts in" : "Remaining",
-                prefixChinese: section == .notStarted ? "距开始" : "剩余"
-            )
+            let countdownDuration = WidgetRelativeDuration(interval: Int(countdownTarget.timeIntervalSince(now)))
 
             return WidgetTaskSnapshot(
                 id: item.id,
@@ -281,10 +301,10 @@ private struct LiquidDeadlineWidgetRepository {
                 startDate: item.startDate,
                 endDate: item.endDate,
                 countdownTarget: countdownTarget,
+                countdownKind: section == .notStarted ? .startsIn : .remaining,
+                countdownDuration: countdownDuration,
                 progress: item.progress(at: now),
-                tint: item.progressTint(at: now),
-                countdownTextEnglish: countdownText.english,
-                countdownTextChinese: countdownText.chinese
+                tint: item.progressTint(at: now)
             )
         }
     }
@@ -319,34 +339,6 @@ private struct LiquidDeadlineWidgetRepository {
         let nextTransition = transitionDates.min()
         let fallbackRefresh = Calendar.current.date(byAdding: .minute, value: 5, to: now) ?? now.addingTimeInterval(300)
         return min(nextTransition ?? fallbackRefresh, fallbackRefresh)
-    }
-
-    private func countdownText(
-        for target: Date,
-        now: Date,
-        prefixEnglish: String,
-        prefixChinese: String
-    ) -> (english: String, chinese: String) {
-        let interval = max(0, Int(target.timeIntervalSince(now)))
-        let days = interval / 86_400
-        let hours = (interval % 86_400) / 3_600
-        let minutes = (interval % 3_600) / 60
-
-        let englishValue: String
-        let chineseValue: String
-
-        if days > 0 {
-            englishValue = "\(days)d \(hours)h"
-            chineseValue = "\(days)天\(hours)时"
-        } else if hours > 0 {
-            englishValue = "\(hours)h \(minutes)m"
-            chineseValue = "\(hours)时\(minutes)分"
-        } else {
-            englishValue = "\(max(minutes, 1))m"
-            chineseValue = "\(max(minutes, 1))分"
-        }
-
-        return ("\(prefixEnglish) \(englishValue)", "\(prefixChinese) \(chineseValue)")
     }
 }
 
@@ -431,33 +423,36 @@ struct LiquidDeadlineWidgetProvider: AppIntentTimelineProvider {
     }
 
     fileprivate static func sampleTasks(for section: WidgetTaskSectionOption, now: Date) -> [WidgetTaskSnapshot] {
+        let language = WidgetLanguage.current()
         let baseStart = Calendar.current.date(byAdding: .hour, value: section == .notStarted ? 2 : -1, to: now) ?? now
         let baseEnd = Calendar.current.date(byAdding: .hour, value: 6, to: baseStart) ?? baseStart
 
         return [
             WidgetTaskSnapshot(
                 id: UUID(),
-                title: section == .notStarted ? "Mock Exam" : "Project Review",
-                category: section == .notStarted ? "Study" : "Work",
+                title: section == .notStarted ? language.sampleTaskTitle(.mockExam) : language.sampleTaskTitle(.projectReview),
+                category: section == .notStarted ? (language.builtInCategoryName(for: "study") ?? "Study") : (language.builtInCategoryName(for: "work") ?? "Work"),
                 startDate: baseStart,
                 endDate: baseEnd,
                 countdownTarget: section == .notStarted ? baseStart : baseEnd,
+                countdownKind: section == .notStarted ? .startsIn : .remaining,
+                countdownDuration: WidgetRelativeDuration(interval: Int((section == .notStarted ? baseStart : baseEnd).timeIntervalSince(now))),
                 progress: section == .notStarted ? 0 : 0.42,
-                tint: section == .notStarted ? .blue : .orange,
-                countdownTextEnglish: section == .notStarted ? "Starts in 2h" : "Remaining 5h",
-                countdownTextChinese: section == .notStarted ? "距开始 2时" : "剩余 5时"
+                tint: section == .notStarted ? .blue : .orange
             ),
             WidgetTaskSnapshot(
                 id: UUID(),
-                title: section == .notStarted ? "Morning Run" : "Submit Report",
-                category: section == .notStarted ? "Health" : "Work",
+                title: section == .notStarted ? language.sampleTaskTitle(.morningRun) : language.sampleTaskTitle(.submitReport),
+                category: section == .notStarted ? (language.builtInCategoryName(for: "health") ?? "Health") : (language.builtInCategoryName(for: "work") ?? "Work"),
                 startDate: Calendar.current.date(byAdding: .hour, value: 4, to: baseStart) ?? baseStart,
                 endDate: Calendar.current.date(byAdding: .hour, value: 8, to: baseStart) ?? baseEnd,
                 countdownTarget: Calendar.current.date(byAdding: .hour, value: section == .notStarted ? 4 : 8, to: baseStart) ?? baseEnd,
+                countdownKind: section == .notStarted ? .startsIn : .remaining,
+                countdownDuration: WidgetRelativeDuration(
+                    interval: Int((Calendar.current.date(byAdding: .hour, value: section == .notStarted ? 4 : 8, to: baseStart) ?? baseEnd).timeIntervalSince(now))
+                ),
                 progress: section == .notStarted ? 0 : 0.74,
-                tint: .green,
-                countdownTextEnglish: section == .notStarted ? "Starts in 6h" : "Remaining 7h",
-                countdownTextChinese: section == .notStarted ? "距开始 6时" : "剩余 7时"
+                tint: .green
             )
         ]
     }
@@ -700,7 +695,7 @@ private struct WidgetTaskRow: View {
                 .foregroundStyle(.primary)
                 .lineLimit(compact ? 2 : 1)
 
-            Text(language.text(task.countdownTextEnglish, task.countdownTextChinese))
+            Text(language.relativeTimeText(task.countdownKind, duration: task.countdownDuration))
                 .font(countdownFont)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
@@ -855,17 +850,8 @@ private struct LockScreenDeadlineWidgetView: View {
     }
 
     private func formattedRemainingTime(until target: Date) -> String {
-        let interval = max(0, Int(target.timeIntervalSince(entry.date)))
-        let days = interval / 86_400
-        let hours = (interval % 86_400) / 3_600
-        let minutes = (interval % 3_600) / 60
-
-        if days > 0 {
-            return entry.language.text("\(days)d \(hours)h", "\(days)天\(hours)时")
-        }
-        if hours > 0 {
-            return entry.language.text("\(hours)h \(minutes)m", "\(hours)时\(minutes)分")
-        }
-        return entry.language.text("\(max(minutes, 1))m", "\(max(minutes, 1))分")
+        entry.language.durationText(
+            WidgetRelativeDuration(interval: Int(target.timeIntervalSince(entry.date)))
+        )
     }
 }

@@ -26,6 +26,7 @@ final class DeadlineTaskRecord: NSManagedObject {
     @NSManaged var repeatRuleInterval: NSNumber?
     @NSManaged var repeatRuleUnitRaw: String?
     @NSManaged var repeatRuleEndDate: Date?
+    @NSManaged var reminderData: Data?
     @NSManaged var storageKindRaw: String
 }
 
@@ -47,6 +48,7 @@ final class DeadlineRecurringSeriesRecord: NSManagedObject {
     @NSManaged var repeatRuleInterval: Int64
     @NSManaged var repeatRuleUnitRaw: String
     @NSManaged var repeatRuleEndDate: Date?
+    @NSManaged var reminderData: Data?
 }
 
 @objc(DeadlineRecurringOverrideRecord)
@@ -62,6 +64,7 @@ final class DeadlineRecurringOverrideRecord: NSManagedObject {
     @NSManaged var endDate: Date?
     @NSManaged var completedAt: Date?
     @NSManaged var isAllDay: NSNumber?
+    @NSManaged var reminderData: Data?
     @NSManaged var deletionFlag: Bool
 }
 
@@ -70,6 +73,7 @@ final class DeadlineSubscriptionRecord: NSManagedObject {
     @NSManaged var id: UUID
     @NSManaged var urlString: String
     @NSManaged var category: String
+    @NSManaged var reminderData: Data?
     @NSManaged var createdAt: Date
 }
 

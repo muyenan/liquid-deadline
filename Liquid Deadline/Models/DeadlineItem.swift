@@ -160,6 +160,7 @@ struct DeadlineItem: Identifiable, Codable, Hashable {
     var repeatSeriesID: UUID?
     var repeatOccurrenceIndex: Int
     var repeatRule: DeadlineRepeatRule?
+    var reminders: [DeadlineReminder]
 
     init(
         id: UUID = UUID(),
@@ -177,7 +178,8 @@ struct DeadlineItem: Identifiable, Codable, Hashable {
         isAllDay: Bool = false,
         repeatSeriesID: UUID? = nil,
         repeatOccurrenceIndex: Int = 0,
-        repeatRule: DeadlineRepeatRule? = nil
+        repeatRule: DeadlineRepeatRule? = nil,
+        reminders: [DeadlineReminder] = []
     ) {
         self.id = id
         self.title = title
@@ -195,6 +197,7 @@ struct DeadlineItem: Identifiable, Codable, Hashable {
         self.repeatSeriesID = repeatSeriesID
         self.repeatOccurrenceIndex = repeatOccurrenceIndex
         self.repeatRule = repeatRule
+        self.reminders = reminders
     }
 
     func section(at now: Date) -> DeadlineSection {
@@ -284,6 +287,7 @@ extension DeadlineItem {
         case repeatSeriesID
         case repeatOccurrenceIndex
         case repeatRule
+        case reminders
     }
 
     init(from decoder: Decoder) throws {
@@ -305,6 +309,7 @@ extension DeadlineItem {
         repeatSeriesID = try container.decodeIfPresent(UUID.self, forKey: .repeatSeriesID)
         repeatOccurrenceIndex = max(try container.decodeIfPresent(Int.self, forKey: .repeatOccurrenceIndex) ?? 0, 0)
         repeatRule = try container.decodeIfPresent(DeadlineRepeatRule.self, forKey: .repeatRule)
+        reminders = try container.decodeIfPresent([DeadlineReminder].self, forKey: .reminders) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -325,5 +330,6 @@ extension DeadlineItem {
         try container.encodeIfPresent(repeatSeriesID, forKey: .repeatSeriesID)
         try container.encode(repeatOccurrenceIndex, forKey: .repeatOccurrenceIndex)
         try container.encodeIfPresent(repeatRule, forKey: .repeatRule)
+        try container.encode(reminders, forKey: .reminders)
     }
 }

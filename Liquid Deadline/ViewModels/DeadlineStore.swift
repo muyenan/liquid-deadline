@@ -10,25 +10,45 @@ final class DeadlineStore: ObservableObject {
             return ["Study", "Work", "Life", "Health", "Finance"]
         case .chinese:
             return ["学习", "工作", "生活", "健康", "财务"]
+        case .japanese:
+            return ["勉強", "仕事", "生活", "健康", "家計"]
+        case .korean:
+            return ["공부", "업무", "생활", "건강", "재정"]
+        case .spanishSpain:
+            return ["Estudio", "Trabajo", "Vida", "Salud", "Finanzas"]
+        case .spanishMexico:
+            return ["Estudio", "Trabajo", "Vida", "Salud", "Finanzas"]
+        case .french:
+            return ["Études", "Travail", "Vie", "Santé", "Finances"]
+        case .german:
+            return ["Lernen", "Arbeit", "Leben", "Gesundheit", "Finanzen"]
+        case .thai:
+            return ["การเรียน", "งาน", "ชีวิต", "สุขภาพ", "การเงิน"]
+        case .vietnamese:
+            return ["Học tập", "Công việc", "Cuộc sống", "Sức khỏe", "Tài chính"]
+        case .indonesian:
+            return ["Belajar", "Kerja", "Hidup", "Kesehatan", "Keuangan"]
+        case .russian:
+            return ["Учёба", "Работа", "Жизнь", "Здоровье", "Финансы"]
         }
     }
 
-    static let fallbackGroupName = "Uncategorized"
+    static var fallbackGroupName: String {
+        AppLanguage.currentForLocalization().text("Uncategorized", "未分类")
+    }
     static let foregroundRefreshInterval: TimeInterval = 15 * 60
     static let backgroundRefreshRequestInterval: TimeInterval = 60 * 60
     static let foregroundRefreshPollInterval: TimeInterval = 30
     static let foregroundCloudRefreshInterval: TimeInterval = 30
     private static let recurrenceHorizonDays = 180
-    private static let builtInGroupSets: [[String]] = [
-        defaultGroups(for: .english),
-        defaultGroups(for: .chinese)
-    ]
+    private static let builtInGroupSets: [[String]] = AppLanguage.allCases.map { defaultGroups(for: $0) }
 
     @Published var items: [DeadlineItem] = [] {
         didSet {
             if isHydratingPersistence == false {
                 saveItems()
             }
+            queueReminderRefresh()
         }
     }
     @Published var subscriptions: [DeadlineSubscription] = [] {
@@ -110,6 +130,7 @@ final class DeadlineStore: ObservableObject {
     private var isRunningSubscriptionRefresh = false
     private var lastForegroundCloudRefreshAt: Date?
     private var persistenceRemoteChangeCancellable: AnyCancellable?
+    private var reminderRefreshTask: Task<Void, Never>?
 
     init() {
         DeadlineStorage.migrateStandardDefaultsIfNeeded()
@@ -142,6 +163,7 @@ final class DeadlineStore: ObservableObject {
         detail: String,
         startDate: Date,
         endDate: Date,
+        reminders: [DeadlineReminder] = [],
         repeatRule: DeadlineRepeatRule? = nil
     ) {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -164,7 +186,8 @@ final class DeadlineStore: ObservableObject {
                     sourceKind: .manual,
                     originalStartDateWasMissing: false,
                     isAllDay: false,
-                    repeatRule: repeatRule
+                    repeatRule: repeatRule,
+                    reminders: reminders
                 )
             )
             applyPersistedState(state, now: startDate)
@@ -178,7 +201,8 @@ final class DeadlineStore: ObservableObject {
                 category: normalizedCategory,
                 detail: trimmedDetail,
                 startDate: startDate,
-                endDate: endDate
+                endDate: endDate,
+                reminders: reminders
             )
         )
         applyPersistedState(state, now: endDate)
@@ -199,14 +223,18 @@ final class DeadlineStore: ObservableObject {
         items.append(contentsOf: importedItems)
     }
 
-    func addSubscription(urlString: String, category: String) async throws {
+    func addSubscription(urlString: String, category: String, reminders: [DeadlineReminder] = []) async throws {
         let normalizedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalizedURL.isEmpty == false else {
             throw DeadlineSyncError.invalidURL
         }
 
         let normalizedCategory = normalizedCategoryName(from: category)
-        let subscription = DeadlineSubscription(urlString: normalizedURL, category: normalizedCategory)
+        let subscription = DeadlineSubscription(
+            urlString: normalizedURL,
+            category: normalizedCategory,
+            reminders: reminders
+        )
         subscriptions.append(subscription)
 
         do {
@@ -331,7 +359,15 @@ final class DeadlineStore: ObservableObject {
         }
     }
 
-    func updateItem(id: UUID, title: String, category: String, detail: String, startDate: Date, endDate: Date) {
+    func updateItem(
+        id: UUID,
+        title: String,
+        category: String,
+        detail: String,
+        startDate: Date,
+        endDate: Date,
+        reminders: [DeadlineReminder]
+    ) {
         applyUpdateItem(
             id: id,
             title: title,
@@ -339,6 +375,7 @@ final class DeadlineStore: ObservableObject {
             detail: detail,
             startDate: startDate,
             endDate: endDate,
+            reminders: reminders,
             scope: .thisEvent
         )
     }
@@ -350,6 +387,7 @@ final class DeadlineStore: ObservableObject {
         detail: String,
         startDate: Date,
         endDate: Date,
+        reminders: [DeadlineReminder],
         scope: DeadlineRecurringChangeScope
     ) -> DeadlineEditSaveResult {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -365,7 +403,8 @@ final class DeadlineStore: ObservableObject {
             proposedCategory: normalizedCategory,
             proposedDetail: trimmedDetail,
             proposedStartDate: startDate,
-            proposedEndDate: endDate
+            proposedEndDate: endDate,
+            proposedReminders: reminders
         )
 
         if conflictFields.isEmpty == false {
@@ -377,6 +416,7 @@ final class DeadlineStore: ObservableObject {
                     proposedDetail: trimmedDetail,
                     proposedStartDate: startDate,
                     proposedEndDate: endDate,
+                    proposedReminders: reminders,
                     scope: scope,
                     fields: conflictFields
                 )
@@ -390,6 +430,7 @@ final class DeadlineStore: ObservableObject {
             detail: trimmedDetail,
             startDate: startDate,
             endDate: endDate,
+            reminders: reminders,
             scope: scope
         )
         return .saved
@@ -402,6 +443,7 @@ final class DeadlineStore: ObservableObject {
         detail: String,
         startDate: Date,
         endDate: Date,
+        reminders: [DeadlineReminder],
         scope: DeadlineRecurringChangeScope
     ) {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -417,7 +459,8 @@ final class DeadlineStore: ObservableObject {
             category: normalizedCategory,
             detail: trimmedDetail,
             startDate: startDate,
-            endDate: endDate
+            endDate: endDate,
+            reminders: reminders
            ) {
             return
         }
@@ -429,7 +472,8 @@ final class DeadlineStore: ObservableObject {
             category: normalizedCategory,
             detail: trimmedDetail,
             startDate: startDate,
-            endDate: endDate
+            endDate: endDate,
+            reminders: reminders
            ) {
             return
         }
@@ -446,6 +490,7 @@ final class DeadlineStore: ObservableObject {
             items[index].detail = trimmedDetail
             items[index].startDate = startDate
             items[index].endDate = endDate
+            items[index].reminders = reminders
             return
         }
 
@@ -467,6 +512,7 @@ final class DeadlineStore: ObservableObject {
             detail: trimmedDetail,
             startDate: startDate,
             endDate: endDate,
+            reminders: reminders,
             repeatRule: repeatRule,
             sourceKind: item.sourceKind,
             previousItems: futureItems
@@ -487,7 +533,8 @@ final class DeadlineStore: ObservableObject {
             proposedCategory: currentItem.category,
             proposedDetail: trimmedDetail,
             proposedStartDate: currentItem.startDate,
-            proposedEndDate: currentItem.endDate
+            proposedEndDate: currentItem.endDate,
+            proposedReminders: currentItem.reminders
         )
 
         if conflictFields.isEmpty == false {
@@ -499,6 +546,7 @@ final class DeadlineStore: ObservableObject {
                     proposedDetail: trimmedDetail,
                     proposedStartDate: currentItem.startDate,
                     proposedEndDate: currentItem.endDate,
+                    proposedReminders: currentItem.reminders,
                     scope: .thisEvent,
                     fields: conflictFields
                 )
@@ -519,7 +567,8 @@ final class DeadlineStore: ObservableObject {
             category: item.category,
             detail: trimmedDetail,
             startDate: item.startDate,
-            endDate: item.endDate
+            endDate: item.endDate,
+            reminders: item.reminders
         ) {
             return
         }
@@ -536,6 +585,7 @@ final class DeadlineStore: ObservableObject {
             detail: conflict.proposedDetail,
             startDate: conflict.proposedStartDate,
             endDate: conflict.proposedEndDate,
+            reminders: conflict.proposedReminders,
             scope: conflict.scope
         )
         return true
@@ -599,6 +649,23 @@ final class DeadlineStore: ObservableObject {
     func removeSubscription(id: UUID) {
         subscriptions.removeAll { $0.id == id }
         items.removeAll { $0.subscriptionID == id }
+    }
+
+    func updateSubscription(id: UUID, category: String, reminders: [DeadlineReminder]) {
+        guard let subscriptionIndex = subscriptions.firstIndex(where: { $0.id == id }) else { return }
+
+        let normalizedCategory = normalizedCategoryName(from: category)
+        subscriptions[subscriptionIndex].category = normalizedCategory
+        subscriptions[subscriptionIndex].reminders = reminders
+
+        for itemIndex in items.indices where items[itemIndex].subscriptionID == id {
+            items[itemIndex].category = normalizedCategory
+            items[itemIndex].reminders = reminders
+        }
+    }
+
+    func refreshReminderNotifications() {
+        queueReminderRefresh()
     }
 
     func items(in section: DeadlineSection, at now: Date) -> [DeadlineItem] {
@@ -807,7 +874,7 @@ final class DeadlineStore: ObservableObject {
     }
 
     func resetGroupsToDefault() {
-        groups = Self.defaultGroups(for: .english)
+        groups = Self.defaultGroups(for: currentStoredLanguageSelection() ?? .english)
         saveGroups()
         validateSelectedFilterGroup()
     }
@@ -850,6 +917,7 @@ final class DeadlineStore: ObservableObject {
         detail: String,
         startDate: Date,
         endDate: Date,
+        reminders: [DeadlineReminder],
         repeatRule: DeadlineRepeatRule,
         sourceKind: DeadlineItemSourceKind,
         seriesID: UUID = UUID(),
@@ -865,7 +933,8 @@ final class DeadlineStore: ObservableObject {
             sourceKind: sourceKind,
             repeatSeriesID: seriesID,
             repeatOccurrenceIndex: 0,
-            repeatRule: repeatRule
+            repeatRule: repeatRule,
+            reminders: reminders
         )
 
         var generatedItems = [seed]
@@ -917,7 +986,8 @@ final class DeadlineStore: ObservableObject {
                     endDate: candidateStartDate.addingTimeInterval(duration),
                     sourceKind: seed.sourceKind,
                     repeatSeriesID: repeatSeriesID,
-                    repeatOccurrenceIndex: occurrenceIndex
+                    repeatOccurrenceIndex: occurrenceIndex,
+                    reminders: seed.reminders
                 )
             )
 
@@ -956,6 +1026,7 @@ final class DeadlineStore: ObservableObject {
                 updatedItems[existingIndex].externalEventIdentifier = draft.externalIdentifier
                 updatedItems[existingIndex].originalStartDateWasMissing = draft.originalStartDateWasMissing
                 updatedItems[existingIndex].completedAt = existingItem.completedAt
+                updatedItems[existingIndex].reminders = subscription.reminders
                 if draft.originalStartDateWasMissing {
                     if existingItem.originalStartDateWasMissing {
                         updatedItems[existingIndex].startDate = existingItem.startDate
@@ -974,6 +1045,7 @@ final class DeadlineStore: ObservableObject {
                         category: subscription.category,
                         sourceKind: .subscribedURL,
                         subscriptionID: subscription.id,
+                        reminders: subscription.reminders,
                         createdAt: importedAt
                     )
                 )
@@ -994,6 +1066,7 @@ final class DeadlineStore: ObservableObject {
         category: String,
         sourceKind: DeadlineItemSourceKind,
         subscriptionID: UUID?,
+        reminders: [DeadlineReminder] = [],
         createdAt: Date
     ) -> DeadlineItem {
         DeadlineItem(
@@ -1007,7 +1080,8 @@ final class DeadlineStore: ObservableObject {
             subscriptionID: subscriptionID,
             externalEventIdentifier: draft.externalIdentifier,
             originalStartDateWasMissing: draft.originalStartDateWasMissing,
-            isAllDay: draft.isAllDay
+            isAllDay: draft.isAllDay,
+            reminders: reminders
         )
     }
 
@@ -1086,6 +1160,7 @@ final class DeadlineStore: ObservableObject {
         detail: String,
         startDate: Date,
         endDate: Date,
+        reminders: [DeadlineReminder],
         repeatRule: DeadlineRepeatRule,
         sourceKind: DeadlineItemSourceKind,
         previousItems: [DeadlineItem]
@@ -1096,6 +1171,7 @@ final class DeadlineStore: ObservableObject {
             detail: detail,
             startDate: startDate,
             endDate: endDate,
+            reminders: reminders,
             repeatRule: repeatRule,
             sourceKind: sourceKind,
             createdAt: previousItems.first?.createdAt ?? .now
@@ -1231,7 +1307,8 @@ final class DeadlineStore: ObservableObject {
             isAllDay: occurrenceOverride?.isAllDay ?? series.isAllDay,
             repeatSeriesID: series.seriesID,
             repeatOccurrenceIndex: occurrenceIndex,
-            repeatRule: occurrenceIndex == 0 ? series.repeatRule : nil
+            repeatRule: occurrenceIndex == 0 ? series.repeatRule : nil,
+            reminders: occurrenceOverride?.reminders ?? series.reminders
         )
     }
 
@@ -1260,7 +1337,8 @@ final class DeadlineStore: ObservableObject {
         category: String,
         detail: String,
         startDate: Date,
-        endDate: Date
+        endDate: Date,
+        reminders: [DeadlineReminder]
     ) -> Bool {
         guard
             let seriesID = item.repeatSeriesID,
@@ -1289,6 +1367,7 @@ final class DeadlineStore: ObservableObject {
         override.endDate = endDate == baseDates.endDate ? nil : endDate
         override.completedAt = item.completedAt
         override.isAllDay = item.isAllDay == series.isAllDay ? nil : item.isAllDay
+        override.reminders = reminders == series.reminders ? nil : reminders
         override.isDeleted = false
 
         if override.isEmpty {
@@ -1312,7 +1391,8 @@ final class DeadlineStore: ObservableObject {
         category: String,
         detail: String,
         startDate: Date,
-        endDate: Date
+        endDate: Date,
+        reminders: [DeadlineReminder]
     ) -> Bool {
         guard
             let seriesID = item.repeatSeriesID,
@@ -1331,6 +1411,7 @@ final class DeadlineStore: ObservableObject {
             state.recurringSeries[seriesIndex].detail = detail
             state.recurringSeries[seriesIndex].startDate = startDate
             state.recurringSeries[seriesIndex].endDate = endDate
+            state.recurringSeries[seriesIndex].reminders = reminders
 
             if var seedOverride = recurringOverride(in: state, seriesID: seriesID, occurrenceIndex: 0) {
                 seedOverride.itemID = recurringItemIDOverride(for: item)
@@ -1339,6 +1420,7 @@ final class DeadlineStore: ObservableObject {
                 seedOverride.detail = nil
                 seedOverride.startDate = nil
                 seedOverride.endDate = nil
+                seedOverride.reminders = nil
                 seedOverride.isDeleted = false
 
                 if seedOverride.isEmpty {
@@ -1376,7 +1458,8 @@ final class DeadlineStore: ObservableObject {
             externalEventIdentifier: originalSeries.externalEventIdentifier,
             originalStartDateWasMissing: originalSeries.originalStartDateWasMissing,
             isAllDay: item.isAllDay,
-            repeatRule: originalSeries.repeatRule
+            repeatRule: originalSeries.repeatRule,
+            reminders: reminders
         )
 
         let futureOverrides = originalState.recurringOverrides
@@ -1645,6 +1728,7 @@ final class DeadlineStore: ObservableObject {
         override.endDate = actualItem.endDate == expectedItem.endDate ? nil : actualItem.endDate
         override.completedAt = actualItem.completedAt == expectedItem.completedAt ? nil : actualItem.completedAt
         override.isAllDay = actualItem.isAllDay == expectedItem.isAllDay ? nil : actualItem.isAllDay
+        override.reminders = actualItem.reminders == expectedItem.reminders ? nil : actualItem.reminders
 
         return override.isEmpty ? nil : override
     }
@@ -1704,7 +1788,8 @@ final class DeadlineStore: ObservableObject {
         proposedCategory: String,
         proposedDetail: String,
         proposedStartDate: Date,
-        proposedEndDate: Date
+        proposedEndDate: Date,
+        proposedReminders: [DeadlineReminder]
     ) -> [DeadlineEditConflictField] {
         var fields: [DeadlineEditConflictField] = []
 
@@ -1743,6 +1828,13 @@ final class DeadlineStore: ObservableObject {
             currentValue: currentItem.endDate,
             proposedValue: proposedEndDate
         )
+        appendConflictField(
+            to: &fields,
+            field: .reminders,
+            baseValue: baseItem.reminders,
+            currentValue: currentItem.reminders,
+            proposedValue: proposedReminders
+        )
 
         return fields
     }
@@ -1758,6 +1850,19 @@ final class DeadlineStore: ObservableObject {
         guard currentValue != baseValue else { return }
         guard proposedValue != currentValue else { return }
         fields.append(field)
+    }
+
+    private func queueReminderRefresh() {
+        let itemSnapshot = items
+        let language = currentStoredLanguageSelection() ?? .english
+
+        reminderRefreshTask?.cancel()
+        reminderRefreshTask = Task {
+            await DeadlineReminderScheduler.shared.refreshNotifications(
+                for: itemSnapshot,
+                language: language
+            )
+        }
     }
 
     private func loadSubscriptions() {
@@ -1878,6 +1983,11 @@ final class DeadlineStore: ObservableObject {
     }
 
     private func loadLiquidMotionEnabled() {
+        guard MotionRuntimeSupport.isSupported else {
+            liquidMotionEnabled = false
+            return
+        }
+
         if defaults.object(forKey: liquidMotionEnabledStorageKey) == nil {
             liquidMotionEnabled = true
             return
@@ -1994,6 +2104,7 @@ final class DeadlineStore: ObservableObject {
                 id: subscription.id,
                 urlString: subscription.urlString,
                 category: subscription.category,
+                reminders: subscription.reminders,
                 createdAt: subscription.createdAt
             )
         }
