@@ -29,21 +29,32 @@ final class MotionManager: ObservableObject {
     private var waveEnergy: CGFloat = 0
     private let maxWaveEnergy: CGFloat = 1.55
     private let maxWaveAmplitude: CGFloat = 0.18
+    private var isActive = false
 
     var liquidWavePhase: CGFloat { state.wavePhase }
     var liquidWaveAmplitude: CGFloat { state.waveAmplitude }
 
-    init() {
-        guard MotionRuntimeSupport.isSupported else { return }
-        start()
-    }
+    init() {}
 
     deinit {
         manager?.stopDeviceMotionUpdates()
     }
 
+    func setUpdatesEnabled(_ isEnabled: Bool) {
+        guard MotionRuntimeSupport.isSupported else { return }
+        guard isActive != isEnabled else { return }
+
+        isActive = isEnabled
+        if isEnabled {
+            start()
+        } else {
+            stop()
+        }
+    }
+
     private func start() {
         guard MotionRuntimeSupport.isSupported else { return }
+        guard manager == nil else { return }
 
         let manager = CMMotionManager()
         guard manager.isDeviceMotionAvailable else { return }
@@ -81,6 +92,17 @@ final class MotionManager: ObservableObject {
             }
 
             self.state = nextState
+        }
+    }
+
+    private func stop(resetState: Bool = true) {
+        manager?.stopDeviceMotionUpdates()
+        manager = nil
+        lastTimestamp = nil
+        waveEnergy = 0
+
+        if resetState, state.wavePhase != 0 || state.waveAmplitude != 0 {
+            state = LiquidState()
         }
     }
 }

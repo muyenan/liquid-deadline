@@ -3,6 +3,7 @@ import CloudKit
 
 struct ContentView: View {
     @EnvironmentObject private var languageManager: LanguageManager
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("deadline_selected_section_v1") private var selectedSectionStorage = DeadlineSection.inProgress.storageValue
     @ObservedObject var store: DeadlineStore
     @StateObject private var motion = MotionManager()
@@ -52,17 +53,17 @@ struct ContentView: View {
     }
 
     var body: some View {
-        TabView(selection: selectedSectionBinding) {
-            ForEach(DeadlineSection.allCases) { section in
-                NavigationStack {
-                    ZStack {
-                        LiquidBackgroundView(
-                            backgroundStyle: store.backgroundStyle
-                        )
+        TimelineView(.periodic(from: .now, by: 1.0)) { timeline in
+            let currentNow = timeline.date
+            TabView(selection: selectedSectionBinding) {
+                ForEach(DeadlineSection.allCases) { section in
+                    NavigationStack {
+                        ZStack {
+                            LiquidBackgroundView(
+                                backgroundStyle: store.backgroundStyle
+                            )
 
-                        ScrollView {
-                            TimelineView(.periodic(from: .now, by: 1.0)) { timeline in
-                                let currentNow = timeline.date
+                            ScrollView {
                                 let sectionItems = store.items(in: section, at: currentNow)
                                 VStack(alignment: .leading, spacing: 14) {
                                     SectionPageHeaderView(
@@ -86,37 +87,37 @@ struct ContentView: View {
                                 .padding(.bottom, 22)
                             }
                         }
-                    }
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            topMenu
-                        }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            subscriptionRefreshButton
-                        }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                showingSettingsSheet = true
-                            } label: {
-                                Image(systemName: "gearshape")
-                                    .fontWeight(.semibold)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarLeading) {
+                                topMenu
+                            }
+                            ToolbarItem(placement: .topBarTrailing) {
+                                subscriptionRefreshButton
+                            }
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button {
+                                    showingSettingsSheet = true
+                                } label: {
+                                    Image(systemName: "gearshape")
+                                        .fontWeight(.semibold)
+                                }
+                            }
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button {
+                                    createDraft = NewDeadlineDraft()
+                                } label: {
+                                    Image(systemName: "plus")
+                                        .fontWeight(.semibold)
+                                }
                             }
                         }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                createDraft = NewDeadlineDraft()
-                            } label: {
-                                Image(systemName: "plus")
-                                    .fontWeight(.semibold)
-                            }
-                        }
                     }
+                    .tabItem {
+                        Label(section.title(in: language), systemImage: section.tabIcon)
+                    }
+                    .tag(section)
                 }
-                .tabItem {
-                    Label(section.title(in: language), systemImage: section.tabIcon)
-                }
-                .tag(section)
             }
         }
         .sheet(item: $createDraft) { draft in
@@ -198,6 +199,7 @@ struct ContentView: View {
         }
         .environmentObject(motion)
         .onAppear {
+            updateMotionActivity()
             store.applyDefaultGroupLocalizationIfNeeded(language: languageManager.currentLanguage)
             if let syncedLanguageSelection = store.syncedLanguageSelection,
                syncedLanguageSelection != languageManager.currentLanguage {
@@ -219,6 +221,18 @@ struct ContentView: View {
         .onChange(of: store.syncedLanguageSelection) { _, newLanguage in
             guard let newLanguage, newLanguage != languageManager.currentLanguage else { return }
             languageManager.applySyncedLanguage(newLanguage)
+        }
+        .onChange(of: scenePhase) { _, _ in
+            updateMotionActivity()
+        }
+        .onChange(of: store.viewStyle) { _, _ in
+            updateMotionActivity()
+        }
+        .onChange(of: store.liquidMotionEnabled) { _, _ in
+            updateMotionActivity()
+        }
+        .onDisappear {
+            motion.setUpdatesEnabled(false)
         }
     }
 
@@ -315,7 +329,7 @@ struct ContentView: View {
 
     private var subscriptionRefreshButton: some View {
         Group {
-            if store.isRefreshingSubscriptions {
+            if store.isSyncActivityInProgress {
                 ProgressView()
                     .controlSize(.small)
             } else {
@@ -327,12 +341,21 @@ struct ContentView: View {
                     Image(systemName: "arrow.clockwise")
                         .fontWeight(.semibold)
                 }
+                .disabled(store.isSyncActivityInProgress)
             }
         }
     }
 
     private func commitMenuSelection(_ action: @escaping () -> Void) {
         DispatchQueue.main.async(execute: action)
+    }
+
+    private func updateMotionActivity() {
+        let shouldEnableMotion =
+            scenePhase == .active &&
+            store.viewStyle == .grid &&
+            store.liquidMotionEnabled
+        motion.setUpdatesEnabled(shouldEnableMotion)
     }
 }
 
@@ -1220,14 +1243,14 @@ private struct SettingsView: View {
                         }
                     } label: {
                         HStack {
-                            if store.isRefreshingSubscriptions {
+                            if store.isSyncActivityInProgress {
                                 ProgressView()
                                     .controlSize(.small)
                             }
                             Text(t("Refresh All Subscriptions", "刷新全部订阅"))
                         }
                     }
-                    .disabled(store.isRefreshingSubscriptions || store.subscriptions.isEmpty)
+                    .disabled(store.isSyncActivityInProgress || store.subscriptions.isEmpty)
                 } header: {
                     Text(t("Subscriptions", "订阅"))
                 } footer: {

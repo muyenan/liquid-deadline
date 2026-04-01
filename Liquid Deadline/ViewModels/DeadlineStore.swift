@@ -43,17 +43,25 @@ final class DeadlineStore: ObservableObject {
     private static let recurrenceHorizonDays = 180
     private static let builtInGroupSets: [[String]] = AppLanguage.allCases.map { defaultGroups(for: $0) }
 
+    private struct SectionItemsCache {
+        let timeBucket: Int
+        let sections: [DeadlineSection: [DeadlineItem]]
+    }
+
     @Published var items: [DeadlineItem] = [] {
         didSet {
-            if isHydratingPersistence == false {
+            invalidateSectionItemsCache()
+            if isHydratingPersistence == false, isPerformingBulkMutation == false {
                 saveItems()
             }
-            queueReminderRefresh()
+            if isPerformingBulkMutation == false {
+                queueReminderRefresh()
+            }
         }
     }
     @Published var subscriptions: [DeadlineSubscription] = [] {
         didSet {
-            if isHydratingPersistence == false {
+            if isHydratingPersistence == false, isPerformingBulkMutation == false {
                 saveSubscriptions()
             }
         }
@@ -68,6 +76,7 @@ final class DeadlineStore: ObservableObject {
     @Published var sortOption: DeadlineSortOption = .addedDateDescending {
         didSet {
             if oldValue != sortOption {
+                invalidateSectionItemsCache()
                 saveSortOption()
             }
         }
@@ -75,6 +84,7 @@ final class DeadlineStore: ObservableObject {
     @Published var selectedFilterGroup: String? = nil {
         didSet {
             if oldValue != selectedFilterGroup {
+                invalidateSectionItemsCache()
                 saveSelectedFilterGroup()
             }
         }
@@ -102,6 +112,7 @@ final class DeadlineStore: ObservableObject {
         }
     }
     @Published var isRefreshingSubscriptions = false
+    @Published private(set) var isCloudSyncInProgress = false
     @Published var lastSyncErrorMessage: String?
     @Published var pendingCloudAccountPrompt: DeadlineCloudAccountPrompt?
     @Published private(set) var syncedLanguageSelection: AppLanguage?
@@ -130,7 +141,15 @@ final class DeadlineStore: ObservableObject {
     private var isRunningSubscriptionRefresh = false
     private var lastForegroundCloudRefreshAt: Date?
     private var persistenceRemoteChangeCancellable: AnyCancellable?
+    private var persistenceCloudSyncEventCancellable: AnyCancellable?
     private var reminderRefreshTask: Task<Void, Never>?
+    private var persistenceGeneration = 0
+    private var isPerformingBulkMutation = false
+    private var sectionItemsCache: SectionItemsCache?
+    private var activeCloudSyncEventIDs = Set<UUID>()
+    private var cloudSyncRequestCount = 0
+    private var queuedImmediateCloudReloadTask: Task<Void, Never>?
+    private var hasPendingImmediateCloudReload = false
 
     init() {
         DeadlineStorage.migrateStandardDefaultsIfNeeded()
@@ -138,6 +157,7 @@ final class DeadlineStore: ObservableObject {
         persistence = DeadlinePersistenceController(syncEnabled: syncOptions.automaticSyncEnabled)
         persistence?.bootstrapIfNeeded(fallbackGroups: Self.defaultGroups(for: .english))
         observePersistenceRemoteChanges()
+        observePersistenceCloudSyncEvents()
         loadViewStyle()
         loadSortOption()
         loadSelectedFilterGroup()
@@ -155,6 +175,10 @@ final class DeadlineStore: ObservableObject {
         }
         extendRecurringItemsIfNeeded(at: .now)
         validateSelectedFilterGroup()
+    }
+
+    var isSyncActivityInProgress: Bool {
+        isRefreshingSubscriptions || isCloudSyncInProgress
     }
 
     func addItem(
@@ -302,7 +326,12 @@ final class DeadlineStore: ObservableObject {
             isRefreshingSubscriptions = false
         }
 
-        await refreshCloudDataForSubscriptionRefresh(now: now, reloadPersistence: true)
+        await refreshCloudDataForSubscriptionRefresh(
+            now: now,
+            reloadPersistence: true,
+            forceReload: force,
+            trackActivity: force
+        )
 
         let subscriptionIDs = subscriptions.map(\.id)
         guard subscriptionIDs.isEmpty == false else {
@@ -318,7 +347,12 @@ final class DeadlineStore: ObservableObject {
             }
         }
 
-        await refreshCloudDataForSubscriptionRefresh(now: now, reloadPersistence: false)
+        await refreshCloudDataForSubscriptionRefresh(
+            now: now,
+            reloadPersistence: false,
+            forceReload: false,
+            trackActivity: false
+        )
     }
 
     func refreshSubscriptionsIfNeeded(now: Date = .now) async {
@@ -332,7 +366,21 @@ final class DeadlineStore: ObservableObject {
             return
         }
 
-        await refreshCloudDataForSubscriptionRefresh(now: now, reloadPersistence: true)
+        await refreshCloudDataForSubscriptionRefresh(
+            now: now,
+            reloadPersistence: true,
+            forceReload: false,
+            trackActivity: false
+        )
+    }
+
+    func refreshCloudDataNow(now: Date = .now) async {
+        await refreshCloudDataForSubscriptionRefresh(
+            now: now,
+            reloadPersistence: true,
+            forceReload: true,
+            trackActivity: true
+        )
     }
 
     func extendRecurringItemsIfNeeded(at now: Date = .now) {
@@ -669,26 +717,14 @@ final class DeadlineStore: ObservableObject {
     }
 
     func items(in section: DeadlineSection, at now: Date) -> [DeadlineItem] {
-        let visibleRecurringOpenItemIDs = visibleRecurringOpenItemIDs(at: now)
-        var result = items.filter {
-            $0.section(at: now) == section &&
-            shouldDisplay($0, in: section, visibleRecurringOpenItemIDs: visibleRecurringOpenItemIDs, now: now)
-        }
-        if let selectedFilterGroup {
-            result = result.filter { $0.category == selectedFilterGroup }
+        let timeBucket = timeBucket(for: now)
+        if let sectionItemsCache, sectionItemsCache.timeBucket == timeBucket {
+            return sectionItemsCache.sections[section] ?? []
         }
 
-        switch sortOption {
-        case .addedDateAscending:
-            result.sort { $0.createdAt < $1.createdAt }
-        case .addedDateDescending:
-            result.sort { $0.createdAt > $1.createdAt }
-        case .remainingTimeAscending:
-            result.sort { sortReferenceDate(for: $0, in: section) < sortReferenceDate(for: $1, in: section) }
-        case .remainingTimeDescending:
-            result.sort { sortReferenceDate(for: $0, in: section) > sortReferenceDate(for: $1, in: section) }
-        }
-        return result
+        let cache = buildSectionItemsCache(at: now, timeBucket: timeBucket)
+        sectionItemsCache = cache
+        return cache.sections[section] ?? []
     }
 
     private func shouldDisplay(
@@ -709,26 +745,35 @@ final class DeadlineStore: ObservableObject {
     }
 
     private func visibleRecurringOpenItemIDs(at now: Date) -> Set<UUID> {
-        let recurringOpenItems = items.filter {
-            $0.belongsToRepeatSeries &&
-            $0.completedAt == nil &&
-            $0.endDate > now
+        var grouped: [UUID: DeadlineItem] = [:]
+
+        for item in items {
+            guard
+                item.belongsToRepeatSeries,
+                item.completedAt == nil,
+                item.endDate > now,
+                let seriesID = item.repeatSeriesID
+            else {
+                continue
+            }
+
+            if let currentVisible = grouped[seriesID] {
+                let shouldReplace =
+                    item.startDate < currentVisible.startDate ||
+                    (item.startDate == currentVisible.startDate &&
+                     item.repeatOccurrenceIndex < currentVisible.repeatOccurrenceIndex)
+                if shouldReplace {
+                    grouped[seriesID] = item
+                }
+            } else {
+                grouped[seriesID] = item
+            }
         }
 
-        let grouped = Dictionary(grouping: recurringOpenItems) { $0.repeatSeriesID ?? UUID() }
         var visibleIDs = Set<UUID>()
 
-        for (_, candidates) in grouped {
-            let nextVisible = candidates.min { lhs, rhs in
-                if lhs.startDate == rhs.startDate {
-                    return lhs.repeatOccurrenceIndex < rhs.repeatOccurrenceIndex
-                }
-                return lhs.startDate < rhs.startDate
-            }
-
-            if let nextVisible {
-                visibleIDs.insert(nextVisible.id)
-            }
+        for item in grouped.values {
+            visibleIDs.insert(item.id)
         }
 
         return visibleIDs
@@ -742,6 +787,52 @@ final class DeadlineStore: ObservableObject {
             return item.endDate
         case .completed:
             return item.completedAt ?? item.endDate
+        }
+    }
+
+    private func invalidateSectionItemsCache() {
+        sectionItemsCache = nil
+    }
+
+    private func timeBucket(for date: Date) -> Int {
+        Int(date.timeIntervalSinceReferenceDate.rounded(.down))
+    }
+
+    private func buildSectionItemsCache(at now: Date, timeBucket: Int) -> SectionItemsCache {
+        let visibleRecurringOpenItemIDs = visibleRecurringOpenItemIDs(at: now)
+        var sections = Dictionary(uniqueKeysWithValues: DeadlineSection.allCases.map { ($0, [DeadlineItem]()) })
+
+        for item in items {
+            let section = item.section(at: now)
+            guard shouldDisplay(item, in: section, visibleRecurringOpenItemIDs: visibleRecurringOpenItemIDs, now: now) else {
+                continue
+            }
+            if let selectedFilterGroup, item.category != selectedFilterGroup {
+                continue
+            }
+            sections[section, default: []].append(item)
+        }
+
+        for section in DeadlineSection.allCases {
+            sortItems(&sections[section, default: []], in: section)
+        }
+
+        return SectionItemsCache(
+            timeBucket: timeBucket,
+            sections: sections
+        )
+    }
+
+    private func sortItems(_ items: inout [DeadlineItem], in section: DeadlineSection) {
+        switch sortOption {
+        case .addedDateAscending:
+            items.sort { $0.createdAt < $1.createdAt }
+        case .addedDateDescending:
+            items.sort { $0.createdAt > $1.createdAt }
+        case .remainingTimeAscending:
+            items.sort { sortReferenceDate(for: $0, in: section) < sortReferenceDate(for: $1, in: section) }
+        case .remainingTimeDescending:
+            items.sort { sortReferenceDate(for: $0, in: section) > sortReferenceDate(for: $1, in: section) }
         }
     }
 
@@ -890,25 +981,55 @@ final class DeadlineStore: ObservableObject {
         }
 
         let groupMap = Dictionary(uniqueKeysWithValues: zip(sourceGroups, targetGroups))
-        groups = targetGroups
+        performBulkMutation(
+            {
+                groups = targetGroups
 
-        for index in items.indices {
-            if let mapped = groupMap[items[index].category] {
-                items[index].category = mapped
-            }
-        }
-        for index in subscriptions.indices {
-            if let mapped = groupMap[subscriptions[index].category] {
-                subscriptions[index].category = mapped
-            }
-        }
+                for index in items.indices {
+                    if let mapped = groupMap[items[index].category] {
+                        items[index].category = mapped
+                    }
+                }
+                for index in subscriptions.indices {
+                    if let mapped = groupMap[subscriptions[index].category] {
+                        subscriptions[index].category = mapped
+                    }
+                }
 
-        if let selectedFilterGroup, let mapped = groupMap[selectedFilterGroup] {
-            self.selectedFilterGroup = mapped
-        }
+                if let selectedFilterGroup, let mapped = groupMap[selectedFilterGroup] {
+                    self.selectedFilterGroup = mapped
+                }
+            },
+            persistItems: true,
+            persistSubscriptions: true,
+            refreshReminders: true
+        )
 
         saveGroups()
         validateSelectedFilterGroup()
+    }
+
+    private func performBulkMutation(
+        _ updates: () -> Void,
+        persistItems: Bool = false,
+        persistSubscriptions: Bool = false,
+        refreshReminders: Bool = false
+    ) {
+        isPerformingBulkMutation = true
+        updates()
+        isPerformingBulkMutation = false
+
+        guard isHydratingPersistence == false else { return }
+
+        if persistItems {
+            saveItems()
+        }
+        if persistSubscriptions {
+            saveSubscriptions()
+        }
+        if refreshReminders {
+            queueReminderRefresh()
+        }
     }
 
     private func makeRecurringItems(
@@ -954,6 +1075,7 @@ final class DeadlineStore: ObservableObject {
         let existingSeriesItems = items
             .filter { $0.repeatSeriesID == repeatSeriesID }
             .sorted { $0.repeatOccurrenceIndex < $1.repeatOccurrenceIndex }
+        var existingOccurrenceIndexes = Set(existingSeriesItems.map(\.repeatOccurrenceIndex))
 
         guard let lastExistingItem = existingSeriesItems.last else { return }
 
@@ -969,10 +1091,7 @@ final class DeadlineStore: ObservableObject {
             }
 
             occurrenceIndex += 1
-            if items.contains(where: {
-                $0.repeatSeriesID == repeatSeriesID &&
-                $0.repeatOccurrenceIndex == occurrenceIndex
-            }) {
+            if existingOccurrenceIndexes.contains(occurrenceIndex) {
                 nextStartDate = candidateStartDate
                 continue
             }
@@ -990,6 +1109,7 @@ final class DeadlineStore: ObservableObject {
                     reminders: seed.reminders
                 )
             )
+            existingOccurrenceIndexes.insert(occurrenceIndex)
 
             nextStartDate = candidateStartDate
         }
@@ -1216,6 +1336,7 @@ final class DeadlineStore: ObservableObject {
 
         if syncOptions.syncTasks {
             persistence?.savePersistedState(migration.state)
+            queueImmediateCloudReloadIfNeeded()
         }
 
         if let compactData = try? JSONEncoder().encode(migration.state) {
@@ -1232,12 +1353,12 @@ final class DeadlineStore: ObservableObject {
         result.append(contentsOf: state.legacyRecurringItems)
 
         let calendar = Calendar.current
+        let overridesBySeries = Dictionary(grouping: state.recurringOverrides, by: \.seriesID)
 
         for series in state.recurringSeries {
-            let occurrenceOverrides = state.recurringOverrides.reduce(into: [Int: DeadlineRecurringOverride]()) { partialResult, candidate in
-                guard candidate.seriesID == series.seriesID else { return }
-                partialResult[candidate.occurrenceIndex] = candidate
-            }
+            let occurrenceOverrides = Dictionary(
+                uniqueKeysWithValues: (overridesBySeries[series.seriesID] ?? []).map { ($0.occurrenceIndex, $0) }
+            )
 
             let futureHorizon = calendar.date(byAdding: .day, value: Self.recurrenceHorizonDays, to: now) ?? now
             let seedHorizon = calendar.date(byAdding: .day, value: Self.recurrenceHorizonDays, to: series.startDate) ?? series.endDate
@@ -1873,6 +1994,7 @@ final class DeadlineStore: ObservableObject {
         let definitions = subscriptionDefinitions(from: subscriptions)
         if syncOptions.syncSubscriptions {
             persistence?.saveSubscriptions(definitions)
+            queueImmediateCloudReloadIfNeeded()
         }
         if let data = try? JSONEncoder().encode(definitions) {
             defaults.set(data, forKey: subscriptionsStorageKey)
@@ -1957,6 +2079,7 @@ final class DeadlineStore: ObservableObject {
     private func saveGroups() {
         if syncOptions.syncGroups {
             persistence?.saveGroups(groups)
+            queueImmediateCloudReloadIfNeeded()
         }
         defaults.set(groups, forKey: groupsStorageKey)
         DeadlineStorage.reloadWidgets()
@@ -2009,10 +2132,33 @@ final class DeadlineStore: ObservableObject {
             }
     }
 
+    private func observePersistenceCloudSyncEvents() {
+        persistenceCloudSyncEventCancellable = NotificationCenter.default
+            .publisher(for: DeadlinePersistenceController.cloudSyncEventNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] notification in
+                guard
+                    let self,
+                    let event = notification.object as? DeadlineCloudSyncEvent
+                else {
+                    return
+                }
+
+                self.handleCloudSyncEvent(event)
+            }
+    }
+
     private func reconfigurePersistence(syncEnabled: Bool) {
+        persistenceGeneration += 1
         persistenceRemoteChangeCancellable = nil
+        persistenceCloudSyncEventCancellable = nil
+        clearCloudSyncEventState()
         persistence = DeadlinePersistenceController(syncEnabled: syncEnabled)
+        persistence?.bootstrapIfNeeded(
+            fallbackGroups: Self.defaultGroups(for: currentStoredLanguageSelection() ?? .english)
+        )
         observePersistenceRemoteChanges()
+        observePersistenceCloudSyncEvents()
         loadSyncedSnapshot(now: .now)
         lastSyncErrorMessage = nil
         if let issue = persistence?.loadIssueDescription,
@@ -2021,13 +2167,28 @@ final class DeadlineStore: ObservableObject {
         }
     }
 
-    private func refreshCloudDataForSubscriptionRefresh(now: Date, reloadPersistence: Bool) async {
+    private func refreshCloudDataForSubscriptionRefresh(
+        now: Date,
+        reloadPersistence: Bool,
+        forceReload: Bool,
+        trackActivity: Bool
+    ) async {
         guard syncOptions.automaticSyncEnabled else { return }
+
+        if trackActivity {
+            beginCloudSyncRequest()
+        }
+        defer {
+            if trackActivity {
+                endCloudSyncRequest()
+            }
+        }
 
         await refreshCloudAccountStatusIfNeeded()
         guard syncOptions.automaticSyncEnabled else { return }
 
         let shouldReloadPersistence = reloadPersistence && (
+            forceReload ||
             lastForegroundCloudRefreshAt.map { now.timeIntervalSince($0) >= 5 } ?? true
         )
 
@@ -2040,6 +2201,79 @@ final class DeadlineStore: ObservableObject {
 
         if let issue = persistence?.loadIssueDescription {
             lastSyncErrorMessage = issue
+        }
+    }
+
+    private func beginCloudSyncRequest() {
+        cloudSyncRequestCount += 1
+        updateCloudSyncActivityState()
+    }
+
+    private func endCloudSyncRequest() {
+        cloudSyncRequestCount = max(cloudSyncRequestCount - 1, 0)
+        updateCloudSyncActivityState()
+    }
+
+    private func resetCloudSyncActivity() {
+        queuedImmediateCloudReloadTask?.cancel()
+        queuedImmediateCloudReloadTask = nil
+        hasPendingImmediateCloudReload = false
+        clearCloudSyncEventState()
+        cloudSyncRequestCount = 0
+        updateCloudSyncActivityState()
+    }
+
+    private func clearCloudSyncEventState() {
+        activeCloudSyncEventIDs.removeAll()
+        updateCloudSyncActivityState()
+    }
+
+    private func updateCloudSyncActivityState() {
+        isCloudSyncInProgress = cloudSyncRequestCount > 0 || activeCloudSyncEventIDs.isEmpty == false
+    }
+
+    private func handleCloudSyncEvent(_ event: DeadlineCloudSyncEvent) {
+        if event.isFinished {
+            activeCloudSyncEventIDs.remove(event.identifier)
+            if let errorDescription = event.errorDescription, errorDescription.isEmpty == false {
+                lastSyncErrorMessage = errorDescription
+            }
+        } else {
+            activeCloudSyncEventIDs.insert(event.identifier)
+        }
+
+        updateCloudSyncActivityState()
+        attemptQueuedImmediateCloudReload()
+    }
+
+    private func queueImmediateCloudReloadIfNeeded() {
+        guard syncOptions.automaticSyncEnabled else { return }
+
+        hasPendingImmediateCloudReload = true
+        queuedImmediateCloudReloadTask?.cancel()
+        queuedImmediateCloudReloadTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            await MainActor.run {
+                self?.attemptQueuedImmediateCloudReload()
+            }
+        }
+    }
+
+    private func attemptQueuedImmediateCloudReload() {
+        guard hasPendingImmediateCloudReload else { return }
+        guard syncOptions.automaticSyncEnabled else {
+            hasPendingImmediateCloudReload = false
+            return
+        }
+        guard activeCloudSyncEventIDs.isEmpty else { return }
+
+        hasPendingImmediateCloudReload = false
+        queuedImmediateCloudReloadTask?.cancel()
+        queuedImmediateCloudReloadTask = nil
+
+        Task { [weak self] in
+            guard let self else { return }
+            await self.refreshCloudDataNow(now: .now)
         }
     }
 
@@ -2142,6 +2376,7 @@ final class DeadlineStore: ObservableObject {
                 backgroundStyle: syncOptions.syncBackgroundStyle ? backgroundStyle : existingPreferences.backgroundStyle
             )
         )
+        queueImmediateCloudReloadIfNeeded()
     }
 
     private func currentStoredLanguageSelection() -> AppLanguage? {
@@ -2247,8 +2482,11 @@ final class DeadlineStore: ObservableObject {
 
     func refreshCloudAccountStatusIfNeeded() async {
         guard syncOptions.automaticSyncEnabled else { return }
+        let expectedPersistenceGeneration = persistenceGeneration
 
         let snapshot = await DeadlineCloudSyncMonitor.fetchCurrentAccountSnapshot()
+        guard expectedPersistenceGeneration == persistenceGeneration else { return }
+        guard syncOptions.automaticSyncEnabled else { return }
         let storedFingerprint = defaults.string(forKey: cloudAccountFingerprintStorageKey)
 
         switch snapshot.status {
@@ -2294,11 +2532,15 @@ final class DeadlineStore: ObservableObject {
         }
 
         pendingCloudAccountPrompt = nil
+        persistenceGeneration += 1
         persistenceRemoteChangeCancellable = nil
+        persistenceCloudSyncEventCancellable = nil
+        resetCloudSyncActivity()
         persistence = nil
         DeadlinePersistenceController.destroyPersistentStoreFiles()
         persistence = DeadlinePersistenceController(syncEnabled: true)
         observePersistenceRemoteChanges()
+        observePersistenceCloudSyncEvents()
 
         var updated = syncOptions
         updated.setAutomaticSyncEnabled(true)

@@ -2455,7 +2455,7 @@ extension AppLanguage {
         case .english:
             return PrivacyPolicyContent(
                 title: "Privacy Policy",
-                effectiveDate: "Effective date: March 12, 2026",
+                effectiveDate: "Effective date: March 20, 2026",
                 sections: [
                     PrivacyPolicySection(
                         title: "1. Data Processing",
@@ -2463,18 +2463,22 @@ extension AppLanguage {
                     ),
                     PrivacyPolicySection(
                         title: "2. Network Services",
-                        body: "The app does not provide account registration, cloud sync, or server-side storage. If you choose to subscribe to an external calendar URL, the app fetches that feed directly from your device to import or refresh tasks. The developer does not receive or store that calendar data on a server."
+                        body: "The app does not require account registration and does not use developer-operated servers to store your task data. If you choose to subscribe to an external calendar URL, the app fetches that feed directly from your device to import or refresh tasks. The developer does not receive or store that calendar data on a server."
                     ),
                     PrivacyPolicySection(
-                        title: "3. Third-Party Sharing",
+                        title: "3. CloudKit Sync",
+                        body: "If you enable synchronization, Liquid Deadline uses Apple's CloudKit framework to sync data across Apple devices signed in to the same iCloud account. The developer does not receive, access, collect, or store your personal data on developer-controlled servers. Sync data is processed through your iCloud account and Apple's CloudKit infrastructure, subject to Apple's applicable terms and privacy practices."
+                    ),
+                    PrivacyPolicySection(
+                        title: "4. Third-Party Sharing",
                         body: "The app does not share your personal information with third parties for advertising, analytics, or profiling."
                     ),
                     PrivacyPolicySection(
-                        title: "4. Your Responsibility",
+                        title: "5. Your Responsibility",
                         body: "You are responsible for how you use this app and for verifying any task, reminder, or deadline information you enter. The developer is not liable for losses, delays, missed deadlines, or other adverse consequences arising from the use of this app, to the extent permitted by applicable law."
                     ),
                     PrivacyPolicySection(
-                        title: "5. Contact",
+                        title: "6. Contact",
                         body: "If you have privacy questions, contact the developer through the contact method provided on the App Store product page."
                     ),
                 ]
@@ -2482,7 +2486,7 @@ extension AppLanguage {
         case .chinese:
             return PrivacyPolicyContent(
                 title: "隐私政策",
-                effectiveDate: "生效日期：2026 年 3 月 12 日",
+                effectiveDate: "生效日期：2026 年 3 月 20 日",
                 sections: [
                     PrivacyPolicySection(
                         title: "1. 数据处理",
@@ -2490,18 +2494,22 @@ extension AppLanguage {
                     ),
                     PrivacyPolicySection(
                         title: "2. 网络服务",
-                        body: "本应用不提供账号注册、云同步或服务器端存储。如果你选择订阅外部日历 URL，应用会仅在你的设备上直接拉取该日历内容，用于导入或刷新事项。开发者不会在服务器端接收或存储这些日历数据。"
+                        body: "本应用无需账号注册，也不会使用开发者自建服务器存储你的任务数据。如果你选择订阅外部日历 URL，应用会仅在你的设备上直接拉取该日历内容，用于导入或刷新事项。开发者不会在服务器端接收或存储这些日历数据。"
                     ),
                     PrivacyPolicySection(
-                        title: "3. 第三方共享",
+                        title: "3. CloudKit 同步",
+                        body: "如果你启用同步功能，Liquid Deadline 会基于 Apple 的 CloudKit 框架，在登录同一 iCloud 账号的 Apple 设备之间同步数据。开发者不会在自有服务器上接收、访问、收集或存储你的个人数据。同步数据通过你的 iCloud 账号与 Apple 提供的 CloudKit 基础设施处理，并受 Apple 相关条款和隐私政策约束。"
+                    ),
+                    PrivacyPolicySection(
+                        title: "4. 第三方共享",
                         body: "本应用不会为了广告、分析或画像目的向第三方共享你的个人信息。"
                     ),
                     PrivacyPolicySection(
-                        title: "4. 用户责任",
+                        title: "5. 用户责任",
                         body: "你应自行决定如何使用本应用，并自行核对你录入的事项、提醒和截止时间信息。在适用法律允许的范围内，开发者不对因使用本应用而产生的损失、延误、错过截止时间或其他不良后果承担责任。"
                     ),
                     PrivacyPolicySection(
-                        title: "5. 联系方式",
+                        title: "6. 联系方式",
                         body: "如果你对隐私问题有疑问，请通过 App Store 产品页提供的联系方式联系开发者。"
                     ),
                 ]
@@ -2509,7 +2517,7 @@ extension AppLanguage {
         case .japanese:
             return PrivacyPolicyContent(
                 title: "プライバシーポリシー",
-                effectiveDate: "施行日: 2026年3月12日",
+                effectiveDate: "施行日: 2026年3月20日",
                 sections: [
                     PrivacyPolicySection(
                         title: "1. データの取り扱い",
@@ -2517,18 +2525,22 @@ extension AppLanguage {
                     ),
                     PrivacyPolicySection(
                         title: "2. ネットワークサービス",
-                        body: "本アプリはアカウント登録、クラウド同期、サーバー側ストレージを提供しません。外部カレンダー URL を購読する場合でも、アプリはあなたのデバイスから直接そのカレンダーを取得してタスクを取り込みまたは更新します。開発者がそのカレンダーデータをサーバー上で受信または保存することはありません。"
+                        body: "本アプリではアカウント登録は不要で、タスクデータを保存するための開発者運営サーバーも使用しません。外部カレンダー URL を購読する場合、アプリはあなたのデバイスから直接そのカレンダーを取得して、タスクの取り込みや更新を行います。開発者がそのカレンダーデータをサーバー上で受信または保存することはありません。"
                     ),
                     PrivacyPolicySection(
-                        title: "3. 第三者共有",
+                        title: "3. CloudKit同期",
+                        body: "同期機能を有効にした場合、Liquid Deadline は Apple の CloudKit フレームワークを利用し、同じ iCloud アカウントでサインインしている Apple デバイス間でデータを同期します。開発者が管理するサーバー上で、あなたの個人データを受信、アクセス、収集、保存することはありません。同期データは、あなたの iCloud アカウントおよび Apple の CloudKit 基盤を通じて処理され、Apple の関連規約およびプライバシーポリシーが適用されます。"
+                    ),
+                    PrivacyPolicySection(
+                        title: "4. 第三者共有",
                         body: "本アプリは、広告、分析、プロファイリングの目的で個人情報を第三者と共有しません。"
                     ),
                     PrivacyPolicySection(
-                        title: "4. 利用者の責任",
+                        title: "5. 利用者の責任",
                         body: "本アプリの利用方法、および入力したタスク、リマインダー、締切情報の確認は利用者自身の責任です。適用法で認められる範囲において、開発者は本アプリの利用に起因する損失、遅延、締切の逸失、その他の不利益について責任を負いません。"
                     ),
                     PrivacyPolicySection(
-                        title: "5. お問い合わせ",
+                        title: "6. お問い合わせ",
                         body: "プライバシーに関するご質問がある場合は、App Store の製品ページに記載された連絡先から開発者までご連絡ください。"
                     ),
                 ]
@@ -2536,7 +2548,7 @@ extension AppLanguage {
         case .korean:
             return PrivacyPolicyContent(
                 title: "개인정보 처리방침",
-                effectiveDate: "시행일: 2026년 3월 12일",
+                effectiveDate: "시행일: 2026년 3월 20일",
                 sections: [
                     PrivacyPolicySection(
                         title: "1. 데이터 처리",
@@ -2544,18 +2556,22 @@ extension AppLanguage {
                     ),
                     PrivacyPolicySection(
                         title: "2. 네트워크 서비스",
-                        body: "이 앱은 계정 등록, 클라우드 동기화 또는 서버 측 저장소를 제공하지 않습니다. 외부 캘린더 URL을 구독하더라도 앱은 작업을 가져오거나 새로고침하기 위해 사용자 기기에서 해당 캘린더를 직접 불러옵니다. 개발자가 서버에서 해당 캘린더 데이터를 수신하거나 저장하지 않습니다."
+                        body: "이 앱은 계정 등록을 요구하지 않으며, 작업 데이터를 저장하기 위해 개발자가 운영하는 서버를 사용하지 않습니다. 외부 캘린더 URL을 구독하면 앱은 사용자 기기에서 해당 캘린더를 직접 가져와 작업을 가져오거나 새로고침합니다. 개발자는 해당 캘린더 데이터를 서버에서 수신하거나 저장하지 않습니다."
                     ),
                     PrivacyPolicySection(
-                        title: "3. 제3자 공유",
+                        title: "3. CloudKit 동기화",
+                        body: "동기화 기능을 켜면 Liquid Deadline은 Apple의 CloudKit 프레임워크를 사용하여 동일한 iCloud 계정으로 로그인한 Apple 기기 사이에서 데이터를 동기화합니다. 개발자가 관리하는 서버에서 사용자의 개인 데이터를 수신, 접근, 수집 또는 저장하지 않습니다. 동기화 데이터는 사용자의 iCloud 계정과 Apple의 CloudKit 인프라를 통해 처리되며, Apple의 관련 약관 및 개인정보 처리방침이 적용됩니다."
+                    ),
+                    PrivacyPolicySection(
+                        title: "4. 제3자 공유",
                         body: "이 앱은 광고, 분석 또는 프로파일링 목적으로 사용자의 개인정보를 제3자와 공유하지 않습니다."
                     ),
                     PrivacyPolicySection(
-                        title: "4. 사용자 책임",
+                        title: "5. 사용자 책임",
                         body: "이 앱을 어떻게 사용할지, 그리고 입력한 작업, 알림, 마감 정보를 확인할 책임은 사용자에게 있습니다. 관련 법률이 허용하는 범위 내에서 개발자는 이 앱 사용으로 인해 발생하는 손실, 지연, 마감 누락 또는 기타 불이익에 대해 책임지지 않습니다."
                     ),
                     PrivacyPolicySection(
-                        title: "5. 문의",
+                        title: "6. 문의",
                         body: "개인정보 관련 문의가 있으면 App Store 제품 페이지에 제공된 연락처를 통해 개발자에게 문의해 주세요."
                     ),
                 ]
@@ -2563,7 +2579,7 @@ extension AppLanguage {
         case .spanishSpain:
             return PrivacyPolicyContent(
                 title: "Política de privacidad",
-                effectiveDate: "Fecha de entrada en vigor: 12 de marzo de 2026",
+                effectiveDate: "Fecha de entrada en vigor: 20 de marzo de 2026",
                 sections: [
                     PrivacyPolicySection(
                         title: "1. Tratamiento de datos",
@@ -2571,18 +2587,22 @@ extension AppLanguage {
                     ),
                     PrivacyPolicySection(
                         title: "2. Servicios de red",
-                        body: "La app no ofrece registro de cuentas, sincronización en la nube ni almacenamiento del lado del servidor. Si decides suscribirte a una URL de calendario externa, la app descarga ese calendario directamente desde tu dispositivo para importar o actualizar tareas. El desarrollador no recibe ni almacena esos datos de calendario en un servidor."
+                        body: "La app no requiere registro de cuenta y no utiliza servidores gestionados por el desarrollador para almacenar tus datos de tareas. Si decides suscribirte a una URL de calendario externa, la app descarga ese calendario directamente desde tu dispositivo para importar o actualizar tareas. El desarrollador no recibe ni almacena esos datos de calendario en un servidor."
                     ),
                     PrivacyPolicySection(
-                        title: "3. Compartición con terceros",
+                        title: "3. Sincronización con CloudKit",
+                        body: "Si activas la sincronización, Liquid Deadline utiliza el framework CloudKit de Apple para sincronizar datos entre dispositivos Apple que hayan iniciado sesión con la misma cuenta de iCloud. El desarrollador no recibe, accede, recopila ni almacena tus datos personales en servidores controlados por el desarrollador. Los datos sincronizados se procesan a través de tu cuenta de iCloud y la infraestructura CloudKit de Apple, y están sujetos a las condiciones y prácticas de privacidad aplicables de Apple."
+                    ),
+                    PrivacyPolicySection(
+                        title: "4. Compartición con terceros",
                         body: "La app no comparte tu información personal con terceros con fines publicitarios, analíticos ni de elaboración de perfiles."
                     ),
                     PrivacyPolicySection(
-                        title: "4. Tu responsabilidad",
+                        title: "5. Tu responsabilidad",
                         body: "Eres responsable de cómo utilizas esta app y de verificar cualquier tarea, recordatorio o fecha límite que introduzcas. En la medida permitida por la ley aplicable, el desarrollador no será responsable de pérdidas, retrasos, plazos incumplidos u otras consecuencias adversas derivadas del uso de esta app."
                     ),
                     PrivacyPolicySection(
-                        title: "5. Contacto",
+                        title: "6. Contacto",
                         body: "Si tienes preguntas sobre privacidad, ponte en contacto con el desarrollador mediante el método de contacto indicado en la página del producto en App Store."
                     ),
                 ]
@@ -2590,7 +2610,7 @@ extension AppLanguage {
         case .spanishMexico:
             return PrivacyPolicyContent(
                 title: "Política de privacidad",
-                effectiveDate: "Fecha de vigencia: 12 de marzo de 2026",
+                effectiveDate: "Fecha de vigencia: 20 de marzo de 2026",
                 sections: [
                     PrivacyPolicySection(
                         title: "1. Tratamiento de datos",
@@ -2598,18 +2618,22 @@ extension AppLanguage {
                     ),
                     PrivacyPolicySection(
                         title: "2. Servicios de red",
-                        body: "La app no ofrece registro de cuentas, sincronización en la nube ni almacenamiento en servidores. Si eliges suscribirte a una URL de calendario externa, la app obtiene ese calendario directamente desde tu dispositivo para importar o actualizar tareas. El desarrollador no recibe ni almacena esos datos de calendario en un servidor."
+                        body: "La app no requiere registro de cuenta y no utiliza servidores administrados por el desarrollador para almacenar tus datos de tareas. Si eliges suscribirte a una URL de calendario externa, la app obtiene ese calendario directamente desde tu dispositivo para importar o actualizar tareas. El desarrollador no recibe ni almacena esos datos de calendario en un servidor."
                     ),
                     PrivacyPolicySection(
-                        title: "3. Compartir con terceros",
+                        title: "3. Sincronización con CloudKit",
+                        body: "Si activas la sincronización, Liquid Deadline utiliza el framework CloudKit de Apple para sincronizar datos entre dispositivos Apple que hayan iniciado sesión con la misma cuenta de iCloud. El desarrollador no recibe, accede, recopila ni almacena tus datos personales en servidores controlados por el desarrollador. Los datos sincronizados se procesan a través de tu cuenta de iCloud y la infraestructura CloudKit de Apple, y quedan sujetos a los términos y prácticas de privacidad aplicables de Apple."
+                    ),
+                    PrivacyPolicySection(
+                        title: "4. Compartir con terceros",
                         body: "La app no comparte tu información personal con terceros con fines de publicidad, analítica o creación de perfiles."
                     ),
                     PrivacyPolicySection(
-                        title: "4. Tu responsabilidad",
+                        title: "5. Tu responsabilidad",
                         body: "Eres responsable de cómo usas esta app y de verificar cualquier tarea, recordatorio o fecha límite que ingreses. En la medida permitida por la ley aplicable, el desarrollador no será responsable por pérdidas, retrasos, fechas límite incumplidas u otras consecuencias adversas derivadas del uso de esta app."
                     ),
                     PrivacyPolicySection(
-                        title: "5. Contacto",
+                        title: "6. Contacto",
                         body: "Si tienes preguntas sobre privacidad, ponte en contacto con el desarrollador mediante el método de contacto indicado en la página del producto en App Store."
                     ),
                 ]
@@ -2617,7 +2641,7 @@ extension AppLanguage {
         case .french:
             return PrivacyPolicyContent(
                 title: "Politique de confidentialité",
-                effectiveDate: "Date d'effet : 12 mars 2026",
+                effectiveDate: "Date d'effet : 20 mars 2026",
                 sections: [
                     PrivacyPolicySection(
                         title: "1. Traitement des données",
@@ -2625,18 +2649,22 @@ extension AppLanguage {
                     ),
                     PrivacyPolicySection(
                         title: "2. Services réseau",
-                        body: "L'application ne propose ni création de compte, ni synchronisation cloud, ni stockage côté serveur. Si vous choisissez de vous abonner à une URL de calendrier externe, l'application récupère ce calendrier directement depuis votre appareil pour importer ou actualiser des tâches. Le développeur ne reçoit ni ne stocke ces données sur un serveur."
+                        body: "L'application ne nécessite pas de création de compte et n'utilise pas de serveurs exploités par le développeur pour stocker vos données de tâches. Si vous choisissez de vous abonner à une URL de calendrier externe, l'application récupère ce calendrier directement depuis votre appareil pour importer ou actualiser des tâches. Le développeur ne reçoit ni ne stocke ces données sur un serveur."
                     ),
                     PrivacyPolicySection(
-                        title: "3. Partage avec des tiers",
+                        title: "3. Synchronisation CloudKit",
+                        body: "Si vous activez la synchronisation, Liquid Deadline utilise le framework CloudKit d'Apple pour synchroniser les données entre les appareils Apple connectés au même compte iCloud. Le développeur ne reçoit pas, n'accède pas, ne collecte pas et ne stocke pas vos données personnelles sur des serveurs contrôlés par le développeur. Les données synchronisées sont traitées via votre compte iCloud et l'infrastructure CloudKit d'Apple, et sont soumises aux conditions et pratiques de confidentialité applicables d'Apple."
+                    ),
+                    PrivacyPolicySection(
+                        title: "4. Partage avec des tiers",
                         body: "L'application ne partage pas vos informations personnelles avec des tiers à des fins publicitaires, analytiques ou de profilage."
                     ),
                     PrivacyPolicySection(
-                        title: "4. Votre responsabilité",
+                        title: "5. Votre responsabilité",
                         body: "Vous êtes responsable de votre manière d'utiliser cette application et de vérifier les tâches, rappels ou échéances que vous saisissez. Dans la mesure permise par la loi applicable, le développeur n'est pas responsable des pertes, retards, échéances manquées ou autres conséquences défavorables résultant de l'utilisation de l'application."
                     ),
                     PrivacyPolicySection(
-                        title: "5. Contact",
+                        title: "6. Contact",
                         body: "Si vous avez des questions relatives à la confidentialité, contactez le développeur via le moyen de contact indiqué sur la page produit de l'App Store."
                     ),
                 ]
@@ -2644,7 +2672,7 @@ extension AppLanguage {
         case .german:
             return PrivacyPolicyContent(
                 title: "Datenschutzerklärung",
-                effectiveDate: "Gültig ab: 12. März 2026",
+                effectiveDate: "Gültig ab: 20. März 2026",
                 sections: [
                     PrivacyPolicySection(
                         title: "1. Datenverarbeitung",
@@ -2652,18 +2680,22 @@ extension AppLanguage {
                     ),
                     PrivacyPolicySection(
                         title: "2. Netzwerkdienste",
-                        body: "Die App bietet keine Kontoregistrierung, keine Cloud-Synchronisierung und keinen serverseitigen Speicher. Wenn Sie einen externen Kalender per URL abonnieren, ruft die App diesen Kalender direkt von Ihrem Gerät ab, um Aufgaben zu importieren oder zu aktualisieren. Der Entwickler empfängt oder speichert diese Kalenderdaten nicht auf einem Server."
+                        body: "Die App erfordert keine Kontoregistrierung und verwendet keine vom Entwickler betriebenen Server, um Ihre Aufgabendaten zu speichern. Wenn Sie einen externen Kalender per URL abonnieren, ruft die App diesen Kalender direkt von Ihrem Gerät ab, um Aufgaben zu importieren oder zu aktualisieren. Der Entwickler empfängt oder speichert diese Kalenderdaten nicht auf einem Server."
                     ),
                     PrivacyPolicySection(
-                        title: "3. Weitergabe an Dritte",
+                        title: "3. CloudKit-Synchronisierung",
+                        body: "Wenn Sie die Synchronisierung aktivieren, verwendet Liquid Deadline das CloudKit-Framework von Apple, um Daten zwischen Apple-Geräten zu synchronisieren, die mit demselben iCloud-Account angemeldet sind. Der Entwickler empfängt Ihre personenbezogenen Daten nicht, greift nicht darauf zu, erhebt sie nicht und speichert sie nicht auf vom Entwickler kontrollierten Servern. Synchronisierte Daten werden über Ihr iCloud-Konto und Apples CloudKit-Infrastruktur verarbeitet und unterliegen Apples einschlägigen Bedingungen und Datenschutzrichtlinien."
+                    ),
+                    PrivacyPolicySection(
+                        title: "4. Weitergabe an Dritte",
                         body: "Die App gibt Ihre personenbezogenen Daten nicht zu Werbe-, Analyse- oder Profiling-Zwecken an Dritte weiter."
                     ),
                     PrivacyPolicySection(
-                        title: "4. Ihre Verantwortung",
+                        title: "5. Ihre Verantwortung",
                         body: "Sie sind selbst dafür verantwortlich, wie Sie diese App nutzen, und dafür, alle eingegebenen Aufgaben-, Erinnerungs- und Fristinformationen zu prüfen. Soweit gesetzlich zulässig, haftet der Entwickler nicht für Verluste, Verzögerungen, verpasste Fristen oder andere nachteilige Folgen, die aus der Nutzung der App entstehen."
                     ),
                     PrivacyPolicySection(
-                        title: "5. Kontakt",
+                        title: "6. Kontakt",
                         body: "Wenn Sie Fragen zum Datenschutz haben, kontaktieren Sie den Entwickler über die auf der App-Store-Produktseite angegebene Kontaktmöglichkeit."
                     ),
                 ]
@@ -2671,7 +2703,7 @@ extension AppLanguage {
         case .thai:
             return PrivacyPolicyContent(
                 title: "นโยบายความเป็นส่วนตัว",
-                effectiveDate: "วันที่มีผลบังคับใช้: 12 มีนาคม 2026",
+                effectiveDate: "วันที่มีผลบังคับใช้: 20 มีนาคม 2026",
                 sections: [
                     PrivacyPolicySection(
                         title: "1. การประมวลผลข้อมูล",
@@ -2679,18 +2711,22 @@ extension AppLanguage {
                     ),
                     PrivacyPolicySection(
                         title: "2. บริการเครือข่าย",
-                        body: "แอปนี้ไม่มีการลงทะเบียนบัญชี การซิงค์บนคลาวด์ หรือการจัดเก็บข้อมูลฝั่งเซิร์ฟเวอร์ หากคุณเลือกสมัครรับ URL ปฏิทินภายนอก แอปจะดึงปฏิทินนั้นโดยตรงจากอุปกรณ์ของคุณเพื่อใช้ในการนำเข้าหรือรีเฟรชงาน นักพัฒนาไม่ได้รับหรือจัดเก็บข้อมูลปฏิทินดังกล่าวบนเซิร์ฟเวอร์"
+                        body: "แอปนี้ไม่ต้องลงทะเบียนบัญชี และไม่ใช้เซิร์ฟเวอร์ที่ผู้พัฒนาดูแลเองในการจัดเก็บข้อมูลงานของคุณ หากคุณเลือกสมัครรับ URL ปฏิทินภายนอก แอปจะดึงปฏิทินนั้นโดยตรงจากอุปกรณ์ของคุณเพื่อใช้ในการนำเข้าหรือรีเฟรชงาน ผู้พัฒนาไม่ได้รับหรือจัดเก็บข้อมูลปฏิทินดังกล่าวบนเซิร์ฟเวอร์"
                     ),
                     PrivacyPolicySection(
-                        title: "3. การแบ่งปันกับบุคคลที่สาม",
+                        title: "3. การซิงค์ด้วย CloudKit",
+                        body: "หากคุณเปิดใช้การซิงค์ Liquid Deadline จะใช้เฟรมเวิร์ก CloudKit ของ Apple เพื่อซิงค์ข้อมูลระหว่างอุปกรณ์ Apple ที่ลงชื่อเข้าใช้ด้วยบัญชี iCloud เดียวกัน ผู้พัฒนาไม่ได้รับ เข้าถึง เก็บรวบรวม หรือจัดเก็บข้อมูลส่วนบุคคลของคุณบนเซิร์ฟเวอร์ที่ผู้พัฒนาควบคุม ข้อมูลที่ซิงค์จะถูกประมวลผลผ่านบัญชี iCloud ของคุณและโครงสร้างพื้นฐาน CloudKit ของ Apple และอยู่ภายใต้ข้อกำหนดและแนวทางด้านความเป็นส่วนตัวของ Apple"
+                    ),
+                    PrivacyPolicySection(
+                        title: "4. การแบ่งปันกับบุคคลที่สาม",
                         body: "แอปนี้จะไม่แบ่งปันข้อมูลส่วนบุคคลของคุณกับบุคคลที่สามเพื่อวัตถุประสงค์ด้านโฆษณา การวิเคราะห์ หรือการสร้างโปรไฟล์"
                     ),
                     PrivacyPolicySection(
-                        title: "4. ความรับผิดชอบของผู้ใช้",
+                        title: "5. ความรับผิดชอบของผู้ใช้",
                         body: "คุณเป็นผู้รับผิดชอบต่อวิธีการใช้งานแอปนี้ รวมถึงการตรวจสอบข้อมูลงาน การเตือนความจำ หรือกำหนดเวลาที่คุณป้อน ภายใต้ขอบเขตที่กฎหมายที่ใช้บังคับอนุญาต นักพัฒนาไม่รับผิดชอบต่อความสูญเสีย ความล่าช้า การพลาดกำหนดเวลา หรือผลกระทบเชิงลบอื่นใดที่เกิดจากการใช้แอปนี้"
                     ),
                     PrivacyPolicySection(
-                        title: "5. การติดต่อ",
+                        title: "6. การติดต่อ",
                         body: "หากคุณมีคำถามเกี่ยวกับความเป็นส่วนตัว โปรดติดต่อผู้พัฒนาผ่านช่องทางการติดต่อที่ระบุไว้ในหน้าผลิตภัณฑ์บน App Store"
                     ),
                 ]
@@ -2698,7 +2734,7 @@ extension AppLanguage {
         case .vietnamese:
             return PrivacyPolicyContent(
                 title: "Chính sách quyền riêng tư",
-                effectiveDate: "Ngày có hiệu lực: 12 tháng 3 năm 2026",
+                effectiveDate: "Ngày có hiệu lực: 20 tháng 3 năm 2026",
                 sections: [
                     PrivacyPolicySection(
                         title: "1. Xử lý dữ liệu",
@@ -2706,18 +2742,22 @@ extension AppLanguage {
                     ),
                     PrivacyPolicySection(
                         title: "2. Dịch vụ mạng",
-                        body: "Ứng dụng không cung cấp đăng ký tài khoản, đồng bộ đám mây hoặc lưu trữ phía máy chủ. Nếu bạn chọn đăng ký một URL lịch bên ngoài, ứng dụng sẽ lấy trực tiếp lịch đó từ thiết bị của bạn để nhập hoặc làm mới tác vụ. Nhà phát triển không nhận hoặc lưu trữ dữ liệu lịch đó trên máy chủ."
+                        body: "Ứng dụng không yêu cầu đăng ký tài khoản và không sử dụng máy chủ do nhà phát triển vận hành để lưu trữ dữ liệu tác vụ của bạn. Nếu bạn chọn đăng ký một URL lịch bên ngoài, ứng dụng sẽ lấy trực tiếp lịch đó từ thiết bị của bạn để nhập hoặc làm mới tác vụ. Nhà phát triển không nhận hoặc lưu trữ dữ liệu lịch đó trên máy chủ."
                     ),
                     PrivacyPolicySection(
-                        title: "3. Chia sẻ với bên thứ ba",
+                        title: "3. Đồng bộ qua CloudKit",
+                        body: "Nếu bạn bật đồng bộ, Liquid Deadline sử dụng framework CloudKit của Apple để đồng bộ dữ liệu giữa các thiết bị Apple đăng nhập cùng một tài khoản iCloud. Nhà phát triển không nhận, truy cập, thu thập hoặc lưu trữ dữ liệu cá nhân của bạn trên các máy chủ do nhà phát triển kiểm soát. Dữ liệu đồng bộ được xử lý thông qua tài khoản iCloud của bạn và hạ tầng CloudKit của Apple, đồng thời chịu sự điều chỉnh của các điều khoản và chính sách quyền riêng tư hiện hành của Apple."
+                    ),
+                    PrivacyPolicySection(
+                        title: "4. Chia sẻ với bên thứ ba",
                         body: "Ứng dụng không chia sẻ thông tin cá nhân của bạn với bên thứ ba cho mục đích quảng cáo, phân tích hoặc lập hồ sơ."
                     ),
                     PrivacyPolicySection(
-                        title: "4. Trách nhiệm của bạn",
+                        title: "5. Trách nhiệm của bạn",
                         body: "Bạn chịu trách nhiệm về cách sử dụng ứng dụng này và về việc xác minh bất kỳ tác vụ, lời nhắc hoặc thông tin hạn chót nào bạn nhập. Trong phạm vi pháp luật hiện hành cho phép, nhà phát triển không chịu trách nhiệm cho tổn thất, chậm trễ, bỏ lỡ hạn chót hoặc hậu quả bất lợi khác phát sinh từ việc sử dụng ứng dụng."
                     ),
                     PrivacyPolicySection(
-                        title: "5. Liên hệ",
+                        title: "6. Liên hệ",
                         body: "Nếu bạn có câu hỏi về quyền riêng tư, vui lòng liên hệ với nhà phát triển bằng phương thức liên hệ được cung cấp trên trang sản phẩm App Store."
                     ),
                 ]
@@ -2725,7 +2765,7 @@ extension AppLanguage {
         case .russian:
             return PrivacyPolicyContent(
                 title: "Политика конфиденциальности",
-                effectiveDate: "Дата вступления в силу: 12 марта 2026 г.",
+                effectiveDate: "Дата вступления в силу: 20 марта 2026 г.",
                 sections: [
                     PrivacyPolicySection(
                         title: "1. Обработка данных",
@@ -2733,18 +2773,22 @@ extension AppLanguage {
                     ),
                     PrivacyPolicySection(
                         title: "2. Сетевые сервисы",
-                        body: "Приложение не предоставляет регистрацию аккаунта, облачную синхронизацию или серверное хранилище. Если вы подпишетесь на внешний URL календаря, приложение будет загружать этот календарь напрямую с вашего устройства для импорта или обновления задач. Разработчик не получает и не хранит эти данные календаря на сервере."
+                        body: "Приложение не требует регистрации аккаунта и не использует серверы, управляемые разработчиком, для хранения ваших данных задач. Если вы подпишетесь на внешний URL календаря, приложение будет загружать этот календарь напрямую с вашего устройства для импорта или обновления задач. Разработчик не получает и не хранит эти данные календаря на сервере."
                     ),
                     PrivacyPolicySection(
-                        title: "3. Передача третьим лицам",
+                        title: "3. Синхронизация через CloudKit",
+                        body: "Если вы включите синхронизацию, Liquid Deadline использует фреймворк Apple CloudKit для синхронизации данных между устройствами Apple, вошедшими в одну и ту же учётную запись iCloud. Разработчик не получает, не имеет доступа, не собирает и не хранит ваши персональные данные на серверах, контролируемых разработчиком. Синхронизируемые данные обрабатываются через вашу учётную запись iCloud и инфраструктуру CloudKit от Apple и подпадают под применимые условия и правила конфиденциальности Apple."
+                    ),
+                    PrivacyPolicySection(
+                        title: "4. Передача третьим лицам",
                         body: "Приложение не передаёт вашу личную информацию третьим лицам в целях рекламы, аналитики или профилирования."
                     ),
                     PrivacyPolicySection(
-                        title: "4. Ваша ответственность",
+                        title: "5. Ваша ответственность",
                         body: "Вы самостоятельно определяете, как использовать это приложение, и обязаны проверять введённые вами задачи, напоминания и сведения о сроках. В пределах, разрешённых применимым законодательством, разработчик не несёт ответственности за убытки, задержки, пропущенные сроки или иные неблагоприятные последствия, возникшие при использовании приложения."
                     ),
                     PrivacyPolicySection(
-                        title: "5. Контакты",
+                        title: "6. Контакты",
                         body: "Если у вас есть вопросы о конфиденциальности, свяжитесь с разработчиком по контактам, указанным на странице приложения в App Store."
                     ),
                 ]
@@ -2752,7 +2796,7 @@ extension AppLanguage {
         case .indonesian:
             return PrivacyPolicyContent(
                 title: "Kebijakan Privasi",
-                effectiveDate: "Tanggal berlaku: 12 Maret 2026",
+                effectiveDate: "Tanggal berlaku: 20 Maret 2026",
                 sections: [
                     PrivacyPolicySection(
                         title: "1. Pemrosesan data",
@@ -2760,18 +2804,22 @@ extension AppLanguage {
                     ),
                     PrivacyPolicySection(
                         title: "2. Layanan jaringan",
-                        body: "Aplikasi ini tidak menyediakan pendaftaran akun, sinkronisasi cloud, atau penyimpanan di sisi server. Jika Anda memilih berlangganan URL kalender eksternal, aplikasi akan mengambil kalender tersebut langsung dari perangkat Anda untuk mengimpor atau menyegarkan tugas. Pengembang tidak menerima atau menyimpan data kalender tersebut di server."
+                        body: "Aplikasi ini tidak memerlukan pendaftaran akun dan tidak menggunakan server yang dikelola pengembang untuk menyimpan data tugas Anda. Jika Anda memilih berlangganan URL kalender eksternal, aplikasi akan mengambil kalender tersebut langsung dari perangkat Anda untuk mengimpor atau menyegarkan tugas. Pengembang tidak menerima atau menyimpan data kalender tersebut di server."
                     ),
                     PrivacyPolicySection(
-                        title: "3. Berbagi dengan pihak ketiga",
+                        title: "3. Sinkronisasi CloudKit",
+                        body: "Jika Anda mengaktifkan sinkronisasi, Liquid Deadline menggunakan framework CloudKit milik Apple untuk menyinkronkan data di antara perangkat Apple yang masuk dengan akun iCloud yang sama. Pengembang tidak menerima, mengakses, mengumpulkan, atau menyimpan data pribadi Anda di server yang dikendalikan pengembang. Data sinkronisasi diproses melalui akun iCloud Anda dan infrastruktur CloudKit milik Apple, serta tunduk pada syarat dan praktik privasi Apple yang berlaku."
+                    ),
+                    PrivacyPolicySection(
+                        title: "4. Berbagi dengan pihak ketiga",
                         body: "Aplikasi ini tidak membagikan informasi pribadi Anda kepada pihak ketiga untuk tujuan iklan, analitik, atau pembuatan profil."
                     ),
                     PrivacyPolicySection(
-                        title: "4. Tanggung jawab Anda",
+                        title: "5. Tanggung jawab Anda",
                         body: "Anda bertanggung jawab atas cara Anda menggunakan aplikasi ini dan untuk memeriksa setiap tugas, pengingat, atau informasi tenggat waktu yang Anda masukkan. Sejauh diizinkan oleh hukum yang berlaku, pengembang tidak bertanggung jawab atas kerugian, keterlambatan, tenggat waktu yang terlewat, atau konsekuensi merugikan lainnya yang timbul dari penggunaan aplikasi ini."
                     ),
                     PrivacyPolicySection(
-                        title: "5. Kontak",
+                        title: "6. Kontak",
                         body: "Jika Anda memiliki pertanyaan terkait privasi, hubungi pengembang melalui metode kontak yang tercantum di halaman produk App Store."
                     ),
                 ]

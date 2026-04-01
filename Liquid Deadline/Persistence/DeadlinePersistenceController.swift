@@ -14,6 +14,25 @@ struct DeadlinePersistenceSnapshot: Hashable {
     var syncPreferences: DeadlineSyncPreferenceSnapshot
 }
 
+struct DeadlineCloudSyncEvent: Hashable {
+    enum EventType: Hashable {
+        case setup
+        case importData
+        case exportData
+    }
+
+    let identifier: UUID
+    let type: EventType
+    let startDate: Date
+    let endDate: Date?
+    let succeeded: Bool
+    let errorDescription: String?
+
+    var isFinished: Bool {
+        endDate != nil
+    }
+}
+
 enum DeadlinePersistenceError: LocalizedError {
     case storeLoadFailed(String)
 
@@ -27,6 +46,7 @@ enum DeadlinePersistenceError: LocalizedError {
 
 final class DeadlinePersistenceController {
     static let remoteChangeNotification = Notification.Name("DeadlinePersistenceRemoteChangeNotification")
+    static let cloudSyncEventNotification = Notification.Name("DeadlinePersistenceCloudSyncEventNotification")
 
     private enum EntityName {
         static let task = "DeadlineTaskRecord"
@@ -37,11 +57,19 @@ final class DeadlinePersistenceController {
         static let syncPreference = "DeadlineSyncPreferenceRecord"
     }
 
+    private struct LoadedContainerResult {
+        let container: NSPersistentCloudKitContainer
+        let isCloudSyncEnabled: Bool
+        let loadIssueDescription: String?
+    }
+
     private let container: NSPersistentCloudKitContainer
     private let context: NSManagedObjectContext
     private let defaults: UserDefaults
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private var remoteChangeObserver: NSObjectProtocol?
+    private var cloudSyncEventObserver: NSObjectProtocol?
 
     let isCloudSyncEnabled: Bool
     let loadIssueDescription: String?
@@ -65,57 +93,34 @@ final class DeadlinePersistenceController {
     ) {
         self.defaults = defaults
 
-        let description = NSPersistentStoreDescription(url: DeadlineStorage.persistentStoreURL())
-        description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
-        description.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
-        description.shouldMigrateStoreAutomatically = true
-        description.shouldInferMappingModelAutomatically = true
-
         let model = Self.makeManagedObjectModel()
-        let cloudContainerIdentifier = DeadlineStorage.cloudKitContainerIdentifier
-
-        var resolvedLoadIssueDescription: String?
-        var resolvedSyncEnabled = false
-
-        let container = NSPersistentCloudKitContainer(name: "LiquidDeadlineModel", managedObjectModel: model)
-        if syncEnabled, let cloudContainerIdentifier {
-            description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(containerIdentifier: cloudContainerIdentifier)
-        }
-        container.persistentStoreDescriptions = [description]
-
         do {
-            try Self.loadStores(for: container)
-            resolvedSyncEnabled = syncEnabled && description.cloudKitContainerOptions != nil
+            let result = try Self.loadContainerWithRecovery(
+                syncEnabled: syncEnabled,
+                model: model,
+                storeURL: DeadlineStorage.persistentStoreURL(),
+                cloudContainerIdentifier: DeadlineStorage.cloudKitContainerIdentifier
+            )
+            self.container = result.container
+            self.context = result.container.viewContext
+            self.isCloudSyncEnabled = result.isCloudSyncEnabled
+            self.loadIssueDescription = result.loadIssueDescription
         } catch {
-            let fallbackContainer = NSPersistentCloudKitContainer(name: "LiquidDeadlineModel", managedObjectModel: model)
-            let fallbackDescription = NSPersistentStoreDescription(url: DeadlineStorage.persistentStoreURL())
-            fallbackDescription.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
-            fallbackDescription.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
-            fallbackDescription.shouldMigrateStoreAutomatically = true
-            fallbackDescription.shouldInferMappingModelAutomatically = true
-            fallbackContainer.persistentStoreDescriptions = [fallbackDescription]
-
-            do {
-                try Self.loadStores(for: fallbackContainer)
-                resolvedLoadIssueDescription = Self.describe(error)
-                self.container = fallbackContainer
-                self.context = fallbackContainer.viewContext
-                self.isCloudSyncEnabled = false
-                self.loadIssueDescription = resolvedLoadIssueDescription
-                configureContext()
-                observeRemoteChanges()
-                return
-            } catch {
-                fatalError("Failed to load Core Data stores: \(Self.describe(error))")
-            }
+            fatalError("Failed to load Core Data stores: \(Self.describe(error))")
         }
 
-        self.container = container
-        self.context = container.viewContext
-        self.isCloudSyncEnabled = resolvedSyncEnabled
-        self.loadIssueDescription = resolvedLoadIssueDescription
         configureContext()
         observeRemoteChanges()
+        observeCloudSyncEvents()
+    }
+
+    deinit {
+        if let remoteChangeObserver {
+            NotificationCenter.default.removeObserver(remoteChangeObserver)
+        }
+        if let cloudSyncEventObserver {
+            NotificationCenter.default.removeObserver(cloudSyncEventObserver)
+        }
     }
 
     func bootstrapIfNeeded(
@@ -170,16 +175,17 @@ final class DeadlinePersistenceController {
 
     func saveGroups(_ groups: [String]) {
         context.performAndWait {
+            let desiredGroups = normalizedGroupNames(groups)
             let request = NSFetchRequest<DeadlineGroupRecord>(entityName: EntityName.group)
             let existing = (try? context.fetch(request)) ?? []
-            let existingByName = Dictionary(uniqueKeysWithValues: existing.map { ($0.name, $0) })
-            let desired = Set(groups)
+            let (existingByName, _) = deduplicatedGroupRecordsByName(from: existing)
+            let desired = Set(desiredGroups)
 
-            for record in existing where desired.contains(record.name) == false {
+            for record in existingByName.values where desired.contains(record.name) == false {
                 context.delete(record)
             }
 
-            for (index, group) in groups.enumerated() {
+            for (index, group) in desiredGroups.enumerated() {
                 let record = existingByName[group] ?? DeadlineGroupRecord(context: context)
                 record.name = group
                 record.order = Int64(index)
@@ -250,7 +256,7 @@ final class DeadlinePersistenceController {
     }
 
     private func observeRemoteChanges() {
-        NotificationCenter.default.addObserver(
+        remoteChangeObserver = NotificationCenter.default.addObserver(
             forName: .NSPersistentStoreRemoteChange,
             object: container.persistentStoreCoordinator,
             queue: nil
@@ -259,7 +265,173 @@ final class DeadlinePersistenceController {
         }
     }
 
-    private static func loadStores(for container: NSPersistentCloudKitContainer) throws {
+    private func observeCloudSyncEvents() {
+        guard isCloudSyncEnabled else { return }
+
+        cloudSyncEventObserver = NotificationCenter.default.addObserver(
+            forName: NSPersistentCloudKitContainer.eventChangedNotification,
+            object: nil,
+            queue: nil
+        ) { notification in
+            guard
+                let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
+                    as? NSPersistentCloudKitContainer.Event
+            else {
+                return
+            }
+
+            NotificationCenter.default.post(
+                name: Self.cloudSyncEventNotification,
+                object: DeadlineCloudSyncEvent(
+                    identifier: event.identifier,
+                    type: Self.cloudSyncEventType(from: event.type),
+                    startDate: event.startDate,
+                    endDate: event.endDate,
+                    succeeded: event.succeeded,
+                    errorDescription: event.error.map(Self.describe)
+                )
+            )
+        }
+    }
+
+    private static func cloudSyncEventType(
+        from type: NSPersistentCloudKitContainer.EventType
+    ) -> DeadlineCloudSyncEvent.EventType {
+        switch type {
+        case .setup:
+            return .setup
+        case .import:
+            return .importData
+        case .export:
+            return .exportData
+        @unknown default:
+            return .setup
+        }
+    }
+
+    private static func loadContainerWithRecovery(
+        syncEnabled: Bool,
+        model: NSManagedObjectModel,
+        storeURL: URL,
+        cloudContainerIdentifier: String?
+    ) throws -> LoadedContainerResult {
+        do {
+            return try loadContainer(
+                syncEnabled: syncEnabled,
+                model: model,
+                storeURL: storeURL,
+                cloudContainerIdentifier: cloudContainerIdentifier
+            )
+        } catch {
+            let primaryErrorDescription = describe(error)
+
+            do {
+                return try loadContainer(
+                    syncEnabled: false,
+                    model: model,
+                    storeURL: storeURL,
+                    cloudContainerIdentifier: cloudContainerIdentifier,
+                    issueDescription: primaryErrorDescription
+                )
+            } catch {
+                let fallbackErrorDescription = describe(error)
+                destroyPersistentStoreFiles()
+
+                do {
+                    return try loadContainer(
+                        syncEnabled: syncEnabled,
+                        model: model,
+                        storeURL: storeURL,
+                        cloudContainerIdentifier: cloudContainerIdentifier,
+                        issueDescription: joinIssueDescriptions([
+                            primaryErrorDescription,
+                            fallbackErrorDescription
+                        ])
+                    )
+                } catch {
+                    let recoveredPrimaryErrorDescription = describe(error)
+
+                    do {
+                        return try loadContainer(
+                            syncEnabled: false,
+                            model: model,
+                            storeURL: storeURL,
+                            cloudContainerIdentifier: cloudContainerIdentifier,
+                            issueDescription: joinIssueDescriptions([
+                                primaryErrorDescription,
+                                fallbackErrorDescription,
+                                recoveredPrimaryErrorDescription
+                            ])
+                        )
+                    } catch {
+                        throw DeadlinePersistenceError.storeLoadFailed(
+                            joinIssueDescriptions([
+                                primaryErrorDescription,
+                                fallbackErrorDescription,
+                                recoveredPrimaryErrorDescription,
+                                describe(error)
+                            ]) ?? "Unknown Core Data store loading failure."
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private static func loadContainer(
+        syncEnabled: Bool,
+        model: NSManagedObjectModel,
+        storeURL: URL,
+        cloudContainerIdentifier: String?,
+        issueDescription: String? = nil
+    ) throws -> LoadedContainerResult {
+        let container = makeContainer(
+            syncEnabled: syncEnabled,
+            model: model,
+            storeURL: storeURL,
+            cloudContainerIdentifier: cloudContainerIdentifier
+        )
+        try loadStores(for: container)
+        return LoadedContainerResult(
+            container: container,
+            isCloudSyncEnabled: syncEnabled && cloudContainerIdentifier != nil,
+            loadIssueDescription: issueDescription
+        )
+    }
+
+    private static func makeContainer(
+        syncEnabled: Bool,
+        model: NSManagedObjectModel,
+        storeURL: URL,
+        cloudContainerIdentifier: String?
+    ) -> NSPersistentCloudKitContainer {
+        let description = NSPersistentStoreDescription(url: storeURL)
+        description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
+        description.setOption(true as NSNumber, forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
+        description.shouldMigrateStoreAutomatically = true
+        description.shouldInferMappingModelAutomatically = true
+
+        if syncEnabled, let cloudContainerIdentifier {
+            description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(
+                containerIdentifier: cloudContainerIdentifier
+            )
+        }
+
+        let container = NSPersistentCloudKitContainer(
+            name: "LiquidDeadlineModel",
+            managedObjectModel: model
+        )
+        container.persistentStoreDescriptions = [description]
+        return container
+    }
+
+    nonisolated private static func joinIssueDescriptions(_ descriptions: [String]) -> String? {
+        let cleaned = descriptions.filter { $0.isEmpty == false }
+        guard cleaned.isEmpty == false else { return nil }
+        return cleaned.joined(separator: "\n\n")
+    }
+
+    nonisolated private static func loadStores(for container: NSPersistentCloudKitContainer) throws {
         var capturedError: Error?
         container.loadPersistentStores { _, error in
             capturedError = error
@@ -269,7 +441,7 @@ final class DeadlinePersistenceController {
         }
     }
 
-    private static func describe(_ error: Error) -> String {
+    nonisolated private static func describe(_ error: Error) -> String {
         let nsError = error as NSError
         let failureReason = nsError.userInfo[NSLocalizedFailureReasonErrorKey] as? String
         let recoverySuggestion = nsError.userInfo[NSLocalizedRecoverySuggestionErrorKey] as? String
@@ -291,7 +463,7 @@ final class DeadlinePersistenceController {
         .joined(separator: "\n")
     }
 
-    private static func describeNSError(_ error: NSError) -> String {
+    nonisolated private static func describeNSError(_ error: NSError) -> String {
         if error.domain == CKErrorDomain {
             let codeName = describeCloudKitCode(error.code)
             if codeName.isEmpty == false {
@@ -302,7 +474,7 @@ final class DeadlinePersistenceController {
         return error.localizedDescription
     }
 
-    private static func describePartialErrors(from error: NSError) -> String? {
+    nonisolated private static func describePartialErrors(from error: NSError) -> String? {
         guard
             error.domain == CKErrorDomain,
             let partialErrors = error.userInfo[CKPartialErrorsByItemIDKey] as? [AnyHashable: NSError],
@@ -320,7 +492,7 @@ final class DeadlinePersistenceController {
         return lines.isEmpty ? nil : "Partial errors:\n" + lines.joined(separator: "\n")
     }
 
-    private static func describeCloudKitCode(_ rawValue: Int) -> String {
+    nonisolated private static func describeCloudKitCode(_ rawValue: Int) -> String {
         switch CKError.Code(rawValue: rawValue) {
         case .internalError:
             return "CKError.internalError"
@@ -443,16 +615,17 @@ final class DeadlinePersistenceController {
     }
 
     private func upsertGroups(_ groups: [String]) {
+        let desiredGroups = normalizedGroupNames(groups)
         let request = NSFetchRequest<DeadlineGroupRecord>(entityName: EntityName.group)
         let existing = (try? context.fetch(request)) ?? []
-        let existingByName = Dictionary(uniqueKeysWithValues: existing.map { ($0.name, $0) })
-        let desired = Set(groups)
+        let (existingByName, _) = deduplicatedGroupRecordsByName(from: existing)
+        let desired = Set(desiredGroups)
 
-        for record in existing where desired.contains(record.name) == false {
+        for record in existingByName.values where desired.contains(record.name) == false {
             context.delete(record)
         }
 
-        for (index, group) in groups.enumerated() {
+        for (index, group) in desiredGroups.enumerated() {
             let record = existingByName[group] ?? DeadlineGroupRecord(context: context)
             record.name = group
             record.order = Int64(index)
@@ -538,7 +711,59 @@ final class DeadlinePersistenceController {
     private func loadGroups() -> [String] {
         let request = NSFetchRequest<DeadlineGroupRecord>(entityName: EntityName.group)
         request.sortDescriptors = [NSSortDescriptor(key: "order", ascending: true)]
-        return ((try? context.fetch(request)) ?? []).map(\.name)
+        let existing = (try? context.fetch(request)) ?? []
+        let (existingByName, removedDuplicates) = deduplicatedGroupRecordsByName(from: existing)
+        let groups = existingByName.values
+            .sorted { lhs, rhs in
+                if lhs.order == rhs.order {
+                    return lhs.name < rhs.name
+                }
+                return lhs.order < rhs.order
+            }
+            .map(\.name)
+
+        if removedDuplicates {
+            persistContextIfNeeded()
+        }
+
+        return groups
+    }
+
+    private func normalizedGroupNames(_ groups: [String]) -> [String] {
+        let trimmed = groups
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+
+        var unique: [String] = []
+        for group in trimmed where unique.contains(group) == false {
+            unique.append(group)
+        }
+        return unique
+    }
+
+    private func deduplicatedGroupRecordsByName(
+        from records: [DeadlineGroupRecord]
+    ) -> ([String: DeadlineGroupRecord], Bool) {
+        let sortedRecords = records.sorted { lhs, rhs in
+            if lhs.order == rhs.order {
+                return lhs.objectID.uriRepresentation().absoluteString < rhs.objectID.uriRepresentation().absoluteString
+            }
+            return lhs.order < rhs.order
+        }
+
+        var uniqueRecords: [String: DeadlineGroupRecord] = [:]
+        var removedDuplicates = false
+
+        for record in sortedRecords {
+            if uniqueRecords[record.name] == nil {
+                uniqueRecords[record.name] = record
+            } else {
+                context.delete(record)
+                removedDuplicates = true
+            }
+        }
+
+        return (uniqueRecords, removedDuplicates)
     }
 
     private func loadSubscriptions() -> [DeadlineSubscription] {
