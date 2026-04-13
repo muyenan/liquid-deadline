@@ -1132,9 +1132,31 @@ final class DeadlineStore: ObservableObject {
         }
 
         let seenIdentifiers = Set(drafts.map(\.externalIdentifier))
+        var usedExistingIndexes = Set<Int>()
+        var obsoleteDuplicateItemIDs = Set<UUID>()
 
         for draft in drafts {
-            if let existingIndex = existingIndexes[draft.externalIdentifier] {
+            let directExistingIndex = existingIndexes[draft.externalIdentifier].flatMap { index in
+                usedExistingIndexes.contains(index) ? nil : index
+            }
+            let localExistingIndex = matchingSubscriptionItemIndex(
+                for: draft,
+                subscription: subscription,
+                in: updatedItems,
+                excluding: usedExistingIndexes
+            )
+            let existingIndex = preferredSubscriptionMatchIndex(
+                directExistingIndex,
+                localExistingIndex,
+                in: updatedItems
+            )
+
+            if let existingIndex {
+                for duplicateIndex in [directExistingIndex, localExistingIndex].compactMap({ $0 })
+                    where duplicateIndex != existingIndex {
+                    obsoleteDuplicateItemIDs.insert(updatedItems[duplicateIndex].id)
+                }
+                usedExistingIndexes.insert(existingIndex)
                 let existingItem = updatedItems[existingIndex]
                 updatedItems[existingIndex].title = draft.title
                 updatedItems[existingIndex].category = subscription.category
@@ -1148,7 +1170,7 @@ final class DeadlineStore: ObservableObject {
                 updatedItems[existingIndex].completedAt = existingItem.completedAt
                 updatedItems[existingIndex].reminders = subscription.reminders
                 if draft.originalStartDateWasMissing {
-                    if existingItem.originalStartDateWasMissing {
+                    if existingItem.startDate < draft.endDate {
                         updatedItems[existingIndex].startDate = existingItem.startDate
                     } else if existingItem.createdAt < draft.endDate {
                         updatedItems[existingIndex].startDate = existingItem.createdAt
@@ -1173,6 +1195,9 @@ final class DeadlineStore: ObservableObject {
         }
 
         updatedItems.removeAll { item in
+            if obsoleteDuplicateItemIDs.contains(item.id) {
+                return true
+            }
             guard item.subscriptionID == subscription.id else { return false }
             guard let externalEventIdentifier = item.externalEventIdentifier else { return false }
             return seenIdentifiers.contains(externalEventIdentifier) == false
@@ -1180,6 +1205,174 @@ final class DeadlineStore: ObservableObject {
 
         return DeadlineLegacyMigration.normalizeDecodedItems(updatedItems)
     }
+
+    private func preferredSubscriptionMatchIndex(
+        _ lhs: Int?,
+        _ rhs: Int?,
+        in items: [DeadlineItem]
+    ) -> Int? {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return nil
+        case (let index?, nil), (nil, let index?):
+            return index
+        case (let lhs?, let rhs?):
+            let lhsItem = items[lhs]
+            let rhsItem = items[rhs]
+
+            if lhsItem.completedAt != nil, rhsItem.completedAt == nil {
+                return lhs
+            }
+            if rhsItem.completedAt != nil, lhsItem.completedAt == nil {
+                return rhs
+            }
+            if lhsItem.startDate != rhsItem.startDate {
+                return lhsItem.startDate < rhsItem.startDate ? lhs : rhs
+            }
+            if lhsItem.createdAt != rhsItem.createdAt {
+                return lhsItem.createdAt < rhsItem.createdAt ? lhs : rhs
+            }
+            return lhs
+        }
+    }
+
+    private func matchingSubscriptionItemIndex(
+        for draft: ICSImportedItemDraft,
+        subscription: DeadlineSubscription,
+        in items: [DeadlineItem],
+        excluding usedIndexes: Set<Int>
+    ) -> Int? {
+        let sourceCandidates = items.indices.filter { index in
+            guard usedIndexes.contains(index) == false else { return false }
+            let item = items[index]
+            guard
+                item.subscriptionID == subscription.id,
+                item.sourceKind == .subscribedURL,
+                item.externalEventIdentifier != draft.externalIdentifier
+            else {
+                return false
+            }
+            return true
+        }
+
+        if let uidMatchIndex = matchingSubscriptionUIDItemIndex(
+            for: draft,
+            in: items,
+            candidates: sourceCandidates
+        ) {
+            return uidMatchIndex
+        }
+
+        return matchingSubscriptionSignatureItemIndex(
+            for: draft,
+            subscription: subscription,
+            in: items,
+            candidates: sourceCandidates
+        )
+    }
+
+    private func matchingSubscriptionUIDItemIndex(
+        for draft: ICSImportedItemDraft,
+        in items: [DeadlineItem],
+        candidates: [Int]
+    ) -> Int? {
+        guard let draftUID = subscriptionEventUID(from: draft.externalIdentifier) else { return nil }
+        let uidCandidates = candidates.filter { index in
+            guard let existingIdentifier = items[index].externalEventIdentifier else { return false }
+
+            return subscriptionEventUID(from: existingIdentifier) == draftUID
+        }
+
+        if draft.originalStartDateWasMissing,
+           let matchingEndDateIndex = uidCandidates.first(where: { subscriptionDatesMatch(items[$0].endDate, draft.endDate) }) {
+            return matchingEndDateIndex
+        }
+
+        if let matchingDatesIndex = uidCandidates.first(where: {
+            subscriptionDatesMatch(items[$0].startDate, draft.startDate) &&
+            subscriptionDatesMatch(items[$0].endDate, draft.endDate)
+        }) {
+            return matchingDatesIndex
+        }
+
+        if uidCandidates.count == 1 {
+            return uidCandidates[0]
+        }
+
+        return nil
+    }
+
+    private func matchingSubscriptionSignatureItemIndex(
+        for draft: ICSImportedItemDraft,
+        subscription: DeadlineSubscription,
+        in items: [DeadlineItem],
+        candidates: [Int]
+    ) -> Int? {
+        let matchingSignatureCandidates = candidates.filter { index in
+            let item = items[index]
+            return subscriptionTextMatches(item.title, draft.title) &&
+                subscriptionTextMatches(item.category, subscription.category) &&
+                subscriptionTextMatches(item.detail, draft.detail) &&
+                subscriptionDatesMatch(item.endDate, draft.endDate)
+        }
+
+        if matchingSignatureCandidates.count <= 1 {
+            return matchingSignatureCandidates.first
+        }
+
+        if let exactStartDateIndex = matchingSignatureCandidates.first(where: {
+            subscriptionDatesMatch(items[$0].startDate, draft.startDate)
+        }) {
+            return exactStartDateIndex
+        }
+
+        if draft.originalStartDateWasMissing,
+           let earliestCreatedIndex = matchingSignatureCandidates.min(by: {
+               items[$0].createdAt < items[$1].createdAt
+           }) {
+            return earliestCreatedIndex
+        }
+
+        return nil
+    }
+
+    private func subscriptionTextMatches(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.trimmingCharacters(in: .whitespacesAndNewlines) ==
+            rhs.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func subscriptionEventUID(from externalIdentifier: String) -> String? {
+        let identifier = externalIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let separatorIndex = identifier.lastIndex(of: "#") else {
+            return identifier.isEmpty ? nil : identifier
+        }
+
+        let suffixStartIndex = identifier.index(after: separatorIndex)
+        let suffix = String(identifier[suffixStartIndex...])
+        let rawUID = isSubscriptionOccurrenceIdentifierSuffix(suffix)
+            ? String(identifier[..<separatorIndex])
+            : identifier
+        let uid = rawUID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return uid.isEmpty ? nil : uid
+    }
+
+    private func isSubscriptionOccurrenceIdentifierSuffix(_ suffix: String) -> Bool {
+        if suffix.hasPrefix("occurrence-") {
+            return Int(suffix.dropFirst("occurrence-".count)) != nil
+        }
+
+        return Self.subscriptionIdentifierDateFormatter.date(from: suffix) != nil
+    }
+
+    private func subscriptionDatesMatch(_ lhs: Date, _ rhs: Date) -> Bool {
+        abs(lhs.timeIntervalSince(rhs)) < 1
+    }
+
+    private static let subscriptionIdentifierDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 
     private func makeImportedItem(
         from draft: ICSImportedItemDraft,
@@ -2286,8 +2479,7 @@ final class DeadlineStore: ObservableObject {
         )
         let fallbackGroups = Self.defaultGroups(for: currentStoredLanguageSelection() ?? .english)
 
-        let resolvedState = (syncOptions.syncTasks ? snapshot.state : localPersistedStateFromDefaults())
-            .removingDerivedSubscriptionData()
+        let baseState = syncOptions.syncTasks ? snapshot.state : localPersistedStateFromDefaults()
         let resolvedGroups = syncOptions.syncGroups
             ? normalizedGroups(
                 snapshot.groups.isEmpty
@@ -2297,21 +2489,25 @@ final class DeadlineStore: ObservableObject {
             )
             : localGroupsFromDefaults(fallbackGroups: fallbackGroups)
         let resolvedSubscriptions = syncOptions.syncSubscriptions
-            ? mergeLocalSubscriptionState(into: snapshot.subscriptions)
+            ? mergeLocalSubscriptionState(
+                into: snapshot.subscriptions.isEmpty
+                ? loadLocalSubscriptionsFromDefaults()
+                : snapshot.subscriptions
+            )
             : loadLocalSubscriptionsFromDefaults()
+        let resolvedSubscriptionIDs = Set(resolvedSubscriptions.compactMap(\.id))
+        let mergedStateResult = persistedStateByMergingLocalSubscriptionItems(
+            into: baseState,
+            validSubscriptionIDs: resolvedSubscriptionIDs,
+            now: now
+        )
+        let resolvedState = mergedStateResult.state
         let syncedLanguage = syncOptions.syncLanguage ? snapshot.syncPreferences.language : nil
         let syncedBackgroundStyle = syncOptions.syncBackgroundStyle ? snapshot.syncPreferences.backgroundStyle : nil
 
         isHydratingPersistence = true
         persistedState = resolvedState
-        let resolvedSubscriptionIDs = Set(resolvedSubscriptions.compactMap(\.id))
-        let localDerivedSubscriptionItems = loadLocalDerivedSubscriptionItemsFromDefaults().filter { item in
-            guard let subscriptionID = item.subscriptionID else { return false }
-            return resolvedSubscriptionIDs.contains(subscriptionID)
-        }
-        items = DeadlineLegacyMigration.normalizeDecodedItems(
-            materializedItems(from: resolvedState, now: now) + localDerivedSubscriptionItems
-        )
+        items = materializedItems(from: resolvedState, now: now)
         groups = resolvedGroups
         subscriptions = resolvedSubscriptions
         syncedLanguageSelection = syncedLanguage
@@ -2330,6 +2526,160 @@ final class DeadlineStore: ObservableObject {
         mirrorSubscriptionsToLocalDefaults(resolvedSubscriptions)
         DeadlineStorage.reloadWidgets()
         validateSelectedFilterGroup()
+
+        if mergedStateResult.didMerge, syncOptions.syncTasks {
+            persistence?.savePersistedState(resolvedState)
+            queueImmediateCloudReloadIfNeeded()
+        }
+    }
+
+    private func persistedStateByMergingLocalSubscriptionItems(
+        into state: DeadlinePersistedState,
+        validSubscriptionIDs: Set<UUID>,
+        now: Date
+    ) -> (state: DeadlinePersistedState, didMerge: Bool) {
+        let localSubscriptionItems = loadLocalDerivedSubscriptionItemsFromDefaults().filter { item in
+            guard let subscriptionID = item.subscriptionID else { return false }
+            return validSubscriptionIDs.contains(subscriptionID)
+        }
+        guard localSubscriptionItems.isEmpty == false else {
+            return (state, false)
+        }
+
+        let stateItems = materializedItems(from: state, now: now)
+        let mergedItems = mergedSubscriptionItems(
+            stateItems,
+            with: localSubscriptionItems
+        )
+        let mergedState = DeadlineLegacyMigration.migrateLegacyItems(
+            DeadlineLegacyMigration.normalizeDecodedItems(mergedItems)
+        ).state
+
+        return (mergedState, mergedState != state)
+    }
+
+    private func mergedSubscriptionItems(
+        _ baseItems: [DeadlineItem],
+        with localSubscriptionItems: [DeadlineItem]
+    ) -> [DeadlineItem] {
+        var result = baseItems
+
+        for localItem in localSubscriptionItems {
+            guard let existingIndex = matchingPersistedSubscriptionItemIndex(
+                for: localItem,
+                in: result
+            ) else {
+                result.append(localItem)
+                continue
+            }
+
+            result[existingIndex] = mergedPersistedSubscriptionItem(
+                result[existingIndex],
+                with: localItem
+            )
+        }
+
+        return result
+    }
+
+    private func matchingPersistedSubscriptionItemIndex(
+        for item: DeadlineItem,
+        in items: [DeadlineItem]
+    ) -> Int? {
+        guard item.sourceKind == .subscribedURL, let subscriptionID = item.subscriptionID else {
+            return nil
+        }
+
+        let candidates = items.indices.filter { index in
+            let existingItem = items[index]
+            return existingItem.sourceKind == .subscribedURL &&
+                existingItem.subscriptionID == subscriptionID &&
+                existingItem.id != item.id
+        }
+
+        if let externalEventIdentifier = item.externalEventIdentifier,
+           let exactIdentifierIndex = candidates.first(where: {
+               items[$0].externalEventIdentifier == externalEventIdentifier
+           }) {
+            return exactIdentifierIndex
+        }
+
+        if let itemIdentifier = item.externalEventIdentifier,
+           let itemUID = subscriptionEventUID(from: itemIdentifier),
+           let matchingUIDIndex = candidates.first(where: { index in
+               guard let existingIdentifier = items[index].externalEventIdentifier else { return false }
+               return subscriptionEventUID(from: existingIdentifier) == itemUID
+           }) {
+            return matchingUIDIndex
+        }
+
+        return candidates.first { index in
+            let existingItem = items[index]
+            return subscriptionTextMatches(existingItem.title, item.title) &&
+                subscriptionTextMatches(existingItem.category, item.category) &&
+                subscriptionTextMatches(existingItem.detail, item.detail) &&
+                subscriptionDatesMatch(existingItem.endDate, item.endDate)
+        }
+    }
+
+    private func mergedPersistedSubscriptionItem(
+        _ lhs: DeadlineItem,
+        with rhs: DeadlineItem
+    ) -> DeadlineItem {
+        var merged = preferredPersistedSubscriptionItem(lhs, rhs)
+        let secondary = merged.id == lhs.id ? rhs : lhs
+
+        merged.sourceKind = .subscribedURL
+        merged.subscriptionID = merged.subscriptionID ?? secondary.subscriptionID
+        merged.externalEventIdentifier = preferredSubscriptionIdentifier(
+            merged.externalEventIdentifier,
+            secondary.externalEventIdentifier
+        )
+        merged.completedAt = merged.completedAt ?? secondary.completedAt
+        merged.createdAt = min(merged.createdAt, secondary.createdAt)
+        merged.originalStartDateWasMissing = merged.originalStartDateWasMissing || secondary.originalStartDateWasMissing
+        if merged.originalStartDateWasMissing, secondary.startDate < merged.startDate, secondary.startDate < merged.endDate {
+            merged.startDate = secondary.startDate
+        }
+        if merged.reminders.isEmpty {
+            merged.reminders = secondary.reminders
+        }
+        return merged
+    }
+
+    private func preferredPersistedSubscriptionItem(
+        _ lhs: DeadlineItem,
+        _ rhs: DeadlineItem
+    ) -> DeadlineItem {
+        if lhs.completedAt != nil, rhs.completedAt == nil {
+            return lhs
+        }
+        if rhs.completedAt != nil, lhs.completedAt == nil {
+            return rhs
+        }
+        if lhs.startDate != rhs.startDate {
+            return lhs.startDate < rhs.startDate ? lhs : rhs
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt < rhs.createdAt ? lhs : rhs
+        }
+        return lhs
+    }
+
+    private func preferredSubscriptionIdentifier(
+        _ lhs: String?,
+        _ rhs: String?
+    ) -> String? {
+        guard let lhs, lhs.isEmpty == false else { return rhs }
+        guard let rhs, rhs.isEmpty == false else { return lhs }
+        return subscriptionIdentifierLooksStable(lhs) ? lhs : rhs
+    }
+
+    private func subscriptionIdentifierLooksStable(_ identifier: String) -> Bool {
+        guard let suffix = identifier.split(separator: "#").last.map(String.init) else {
+            return false
+        }
+        return isSubscriptionOccurrenceIdentifierSuffix(suffix) == false
     }
 
     private func subscriptionDefinitions(from subscriptions: [DeadlineSubscription]) -> [DeadlineSubscription] {

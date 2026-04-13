@@ -205,16 +205,8 @@ struct DeadlinePersistedState: Codable, Hashable {
     }
 
     func removingDerivedSubscriptionData() -> DeadlinePersistedState {
-        let filteredSeries = recurringSeries.filter { $0.subscriptionID == nil && $0.sourceKind != .subscribedURL }
-        let validSeriesIDs = Set(filteredSeries.map(\.seriesID))
-
-        return DeadlinePersistedState(
-            schemaVersion: schemaVersion,
-            standaloneItems: standaloneItems.filter { $0.subscriptionID == nil && $0.sourceKind != .subscribedURL },
-            legacyRecurringItems: legacyRecurringItems.filter { $0.subscriptionID == nil && $0.sourceKind != .subscribedURL },
-            recurringSeries: filteredSeries,
-            recurringOverrides: recurringOverrides.filter { validSeriesIDs.contains($0.seriesID) }
-        )
+        // Subscription-imported tasks are now first-class persisted data.
+        self
     }
 }
 

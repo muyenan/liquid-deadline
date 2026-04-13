@@ -144,17 +144,18 @@ enum DeadlineLegacyMigration {
         let normalizedItems = normalizeDecodedItems(items)
 
         let standaloneItems = normalizedItems.filter {
-            $0.belongsToRepeatSeries == false && $0.sourceKind != .subscribedURL
+            $0.belongsToRepeatSeries == false
         }
         let standaloneItemIDs = standaloneItems
+            .filter { $0.sourceKind != .subscribedURL }
             .map(\.id)
 
-        let subscriptionItemIDs = normalizedItems
-            .filter { $0.belongsToRepeatSeries == false && $0.sourceKind == .subscribedURL }
+        let subscriptionItemIDs = standaloneItems
+            .filter { $0.sourceKind == .subscribedURL }
             .map(\.id)
 
         let groupedSeries = Dictionary(grouping: normalizedItems.filter {
-            $0.belongsToRepeatSeries && $0.sourceKind != .subscribedURL
+            $0.belongsToRepeatSeries
         }) { item in
             item.repeatSeriesID ?? UUID()
         }

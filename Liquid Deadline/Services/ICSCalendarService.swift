@@ -275,7 +275,7 @@ private struct ICSEvent {
         guard let recurrenceRule else {
             return [
                 ICSImportedItemDraft(
-                    externalIdentifier: externalIdentifier(for: startValue?.date ?? baseEnd),
+                    externalIdentifier: uid,
                     title: title,
                     detail: detail,
                     startDate: baseStart,
@@ -288,6 +288,9 @@ private struct ICSEvent {
 
         var drafts: [ICSImportedItemDraft] = []
         var occurrenceStart = baseStart
+        var occurrenceIdentifierDate = originalStartMissing
+            ? stableMissingStartOccurrenceIdentifierDate(calendar: calendar)
+            : baseStart
         var index = 0
         let duration = max(baseEnd.timeIntervalSince(baseStart), 1)
         while index < recurrenceRule.maxOccurrences {
@@ -300,7 +303,10 @@ private struct ICSEvent {
 
             drafts.append(
                 ICSImportedItemDraft(
-                    externalIdentifier: externalIdentifier(for: occurrenceStart),
+                    externalIdentifier: occurrenceIdentifier(
+                        for: occurrenceIdentifierDate,
+                        occurrenceIndex: index
+                    ),
                     title: title,
                     detail: detail,
                     startDate: occurrenceStart,
@@ -318,6 +324,13 @@ private struct ICSEvent {
                 break
             }
             occurrenceStart = next
+            if let identifierDate = occurrenceIdentifierDate {
+                occurrenceIdentifierDate = calendar.date(
+                    byAdding: recurrenceRule.unit.calendarComponent,
+                    value: recurrenceRule.interval,
+                    to: identifierDate
+                )
+            }
             index += 1
         }
 
@@ -414,6 +427,17 @@ private struct ICSEvent {
 
     private func externalIdentifier(for occurrenceDate: Date) -> String {
         "\(uid)#\(Self.identifierFormatter.string(from: occurrenceDate))"
+    }
+
+    private func occurrenceIdentifier(for occurrenceDate: Date?, occurrenceIndex: Int) -> String {
+        guard let occurrenceDate else {
+            return "\(uid)#occurrence-\(occurrenceIndex)"
+        }
+        return externalIdentifier(for: occurrenceDate)
+    }
+
+    private func stableMissingStartOccurrenceIdentifierDate(calendar: Calendar) -> Date? {
+        preferredDeadlineValue.map { normalizedDeadlineDate(for: $0, calendar: calendar) }
     }
 
     private static let identifierFormatter: ISO8601DateFormatter = {

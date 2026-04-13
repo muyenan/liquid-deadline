@@ -8,11 +8,11 @@
 ## Current Legacy Risks
 - `DeadlineItem` payloads may exist without `id`. These must be assigned a fresh `UUID` during decode and then re-saved locally.
 - Recurring items are currently materialized as many future instances. In the current store, a daily recurring item can expand into 180 local rows.
-- Subscription feeds already store per-event items locally. These items should stay local-only in the sync migration; only subscription definitions should sync.
+- Subscription feeds store per-event items locally and sync them through CloudKit, including completion state and the first preserved start time.
 
 ## Target Sync Model
 - `TaskItem`
-  - One-time manual/file-import task.
+  - One-time manual/file-import task, plus tasks imported from URL subscriptions.
 - `RecurringSeries`
   - The seed task and repeat rule.
 - `RecurringOccurrenceOverride`
@@ -26,7 +26,7 @@
 1. Read legacy items from `UserDefaults`.
 2. Assign missing `UUID`s and repair duplicate IDs before any sync import.
 3. Import non-recurring manual/file-import items 1:1 into the new sync store.
-4. Ignore subscription-generated items for cloud import. Only migrate subscription definitions.
+4. Import subscription-generated one-time items as syncable task records so completion state survives relaunches and device changes.
 5. Collapse recurring legacy items by `repeatSeriesID`.
 6. For each recurring group, require exactly one seed item:
    - `repeatRule != nil`
